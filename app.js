@@ -1,9 +1,9 @@
 // ==================== CONFIGURATION ====================
-const SUPABASE_URL = 'https://vsvvtyjbdrldlcswujzg.supabase.co';
+const SUPABASE_URL = 'VOTRE_URL_SUPABASE';      // À remplacer
+const SUPABASE_ANON_KEY = 'VOTRE_CLE_ANON';    // À remplacer
 
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZzdnZ0eWpiZHJsZGxjc3d1anpnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxNDUyNTEsImV4cCI6MjA5MjcyMTI1MX0.YgkmLIoPJi3FQI6LvBVudB76LkMjR2Jywr8SZjNj1no'; 
 const { createClient } = window.supabase;
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let currentUser = null;
 let currentPeriode = { debut: '', fin: '' };
@@ -26,7 +26,7 @@ let expensesChart = null;
 async function login() {
     const email = document.getElementById('email').value;
     const password = document.getElementById('password').value;
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await db.auth.signInWithPassword({ email, password });
     if (error) alert('Erreur: ' + error.message);
     else checkAuth();
 }
@@ -34,18 +34,18 @@ async function login() {
 async function register() {
     const email = document.getElementById('email').value;
     const password = document.getElementById('password').value;
-    const { error } = await supabase.auth.signUp({ email, password });
+    const { error } = await db.auth.signUp({ email, password });
     if (error) alert(error.message);
     else alert('Inscription réussie ! Connectez-vous.');
 }
 
 async function logout() {
-    await supabase.auth.signOut();
+    await db.auth.signOut();
     window.location.reload();
 }
 
 async function checkAuth() {
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data: { session } } = await db.auth.getSession();
     if (session?.user) {
         currentUser = session.user;
         authScreen.style.display = 'none';
@@ -63,7 +63,7 @@ async function checkAuth() {
 // ==================== CHARGEMENT DONNÉES UTILISATEUR ====================
 async function loadUserData() {
     // Récupérer comptes
-    const { data: accounts, error: accErr } = await supabase
+    const { data: accounts, error: accErr } = await db
         .from('accounts')
         .select('*')
         .eq('user_id', currentUser.id);
@@ -73,7 +73,7 @@ async function loadUserData() {
         updateBalancesDisplay();
     }
     // Récupérer catégories
-    const { data: cats, error: catErr } = await supabase
+    const { data: cats, error: catErr } = await db
         .from('categories')
         .select('*')
         .eq('user_id', currentUser.id);
@@ -143,7 +143,7 @@ async function refreshDashboard() {
 
 // ==================== CHARGEMENT TRANSACTIONS ====================
 async function loadTransactions() {
-    const { data, error } = await supabase
+    const { data, error } = await db
         .from('transactions')
         .select('*, accounts(name), categories(name, icon)')
         .eq('user_id', currentUser.id)
@@ -259,7 +259,7 @@ async function executeInstruction(inst) {
             if (cat.name.toLowerCase() === inst.category.toLowerCase()) catId = id;
         }
         if (!catId) {
-            const { data, error } = await supabase
+            const { data, error } = await db
                 .from('categories')
                 .insert({ user_id: currentUser.id, name: inst.category, icon: '📌' })
                 .select();
@@ -275,7 +275,7 @@ async function executeInstruction(inst) {
         }
         if (!accId) return addChatMessage('ai', '❌ Compte non trouvé (cash/wave/epargne)');
 
-        const { error } = await supabase.from('transactions').insert({
+        const { error } = await db.from('transactions').insert({
             user_id: currentUser.id,
             amount: inst.amount,
             description: inst.description,
@@ -287,7 +287,7 @@ async function executeInstruction(inst) {
         if (!error) {
             const account = accountsMap.get(accId);
             const newBalance = account.balance - inst.amount;
-            await supabase.from('accounts').update({ balance: newBalance }).eq('id', accId);
+            await db.from('accounts').update({ balance: newBalance }).eq('id', accId);
             account.balance = newBalance;
             updateBalancesDisplay();
             addChatMessage('ai', `✅ Ajouté : ${inst.amount} F (${inst.category}) sur ${inst.account}`);
@@ -308,8 +308,8 @@ async function executeInstruction(inst) {
         const epargneAcc = accountsMap.get(epargneId);
         if (sourceAcc.balance < inst.amount) return addChatMessage('ai', `❌ Solde ${sourceName} insuffisant`);
 
-        await supabase.from('accounts').update({ balance: sourceAcc.balance - inst.amount }).eq('id', sourceId);
-        await supabase.from('accounts').update({ balance: epargneAcc.balance + inst.amount }).eq('id', epargneId);
+        await db.from('accounts').update({ balance: sourceAcc.balance - inst.amount }).eq('id', sourceId);
+        await db.from('accounts').update({ balance: epargneAcc.balance + inst.amount }).eq('id', epargneId);
         sourceAcc.balance -= inst.amount;
         epargneAcc.balance += inst.amount;
         updateBalancesDisplay();
@@ -403,7 +403,7 @@ async function showCategoriesModal() {
 }
 
 async function deleteCategory(id) {
-    await supabase.from('categories').delete().eq('id', id);
+    await db.from('categories').delete().eq('id', id);
     await loadUserData();
     showCategoriesModal();
 }
@@ -412,7 +412,7 @@ async function addCategory() {
     const name = document.getElementById('newCategoryName').value.trim();
     const icon = document.getElementById('newCategoryIcon').value || '📌';
     if (!name) return;
-    await supabase.from('categories').insert({ user_id: currentUser.id, name, icon });
+    await db.from('categories').insert({ user_id: currentUser.id, name, icon });
     await loadUserData();
     showCategoriesModal();
     document.getElementById('newCategoryName').value = '';
