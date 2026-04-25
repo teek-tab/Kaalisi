@@ -147,7 +147,7 @@ Ne pose pas de questions inutiles. Devine quand possible. Réponds UNIQUEMENT en
             console.error('DeepSeek error response:', data);
             return res.status(200).json({ 
                 action: 'answer', 
-                message: '❌ L'IA est temporairement indisponible. Réessayez dans un moment.' 
+                message: '❌ L'\IA est temporairement indisponible. Réessayez dans un moment.' 
             });
         }
 
