@@ -2,8 +2,11 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Mon Budget IA</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>KAALISI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -78,7 +81,7 @@
         <div class="header-actions">
             <button id="addTransactionBtn" class="btn-small">➕ Ajouter transaction</button>
             <button id="manageAccountsBtn" class="btn-small">🏦 Comptes</button>
-            <button id="manageCategoriesBtn" class="btn-small">Gérer catégories</button>
+            <button id="manageCategoriesBtn" class="btn-small">📂 Catégories</button>
         </div>
     </div>
     <div class="transactions-list" id="transactionsList"></div>
@@ -86,23 +89,23 @@
     <!-- Modal Ajouter/Modifier Transaction -->
     <div id="transactionModal" class="modal">
         <div class="modal-content">
-            <span class="close" onclick="closeModal('transactionModal')">&times;</span>
+            <button class="close" onclick="closeModal('transactionModal')">&times;</button>
             <h3 id="transactionModalTitle">➕ Ajouter transaction</h3>
             <form id="transactionForm" onsubmit="event.preventDefault(); saveTransactionForm();">
                 <div class="form-row">
                     <label>Montant (F)</label>
-                    <input type="number" id="transAmount" step="0.01" required>
+                    <input type="number" id="transAmount" step="0.01" required placeholder="1000">
                 </div>
                 <div class="form-row">
                     <label>Description</label>
-                    <input type="text" id="transDescription" placeholder="Ex: Sandwich">
+                    <input type="text" id="transDescription" placeholder="Ex: Sandwich du midi">
                 </div>
                 <div class="form-row">
                     <label>Type</label>
                     <select id="transType">
-                        <option value="expense">Dépense</option>
-                        <option value="income">Revenu</option>
-                        <option value="transfer">Transfert</option>
+                        <option value="expense">💸 Dépense</option>
+                        <option value="income">💰 Revenu</option>
+                        <option value="transfer">🔄 Transfert</option>
                     </select>
                 </div>
                 <div class="form-row">
@@ -121,7 +124,7 @@
                         <option value="">-- Choisir --</option>
                     </select>
                 </div>
-                <button type="submit" id="saveTransactionBtn" class="btn-primary">💾 Enregistrer</button>
+                <button type="submit" id="saveTransactionBtn" class="btn-primary" style="margin-top:8px;">💾 Enregistrer</button>
             </form>
         </div>
     </div>
@@ -129,7 +132,7 @@
     <!-- Modal Gestion Comptes -->
     <div id="accountsModal" class="modal">
         <div class="modal-content">
-            <span class="close" onclick="closeModal('accountsModal')">&times;</span>
+            <button class="close" onclick="closeModal('accountsModal')">&times;</button>
             <h3>🏦 Mes comptes</h3>
             <div id="accountsList"></div>
             <div class="add-account">
@@ -143,8 +146,8 @@
     <!-- Modal Gestion Catégories -->
     <div id="categoriesModal" class="modal">
         <div class="modal-content">
-            <span class="close" onclick="closeModal('categoriesModal')">&times;</span>
-            <h3>Mes catégories</h3>
+            <button class="close" onclick="closeModal('categoriesModal')">&times;</button>
+            <h3>📂 Mes catégories</h3>
             <div id="categoriesList"></div>
             <div class="add-category">
                 <input type="text" id="newCategoryName" placeholder="Nouvelle catégorie">
