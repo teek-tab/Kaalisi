@@ -1,0 +1,9 @@
+{
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "env": {
+    "DEEPSEEK_API_KEY": "@deepseek_api_key"
+  }
+}

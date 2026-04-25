@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Mon Budget IA</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<!-- ÉCRAN DE CONNEXION -->
+<div id="authScreen" class="auth-container">
+    <div class="auth-card">
+        <h1>💰 Mon Budget IA</h1>
+        <p>Gérez vos dépenses par chat intelligent</p>
+        <input type="email" id="email" placeholder="Email" class="input" autocomplete="email">
+        <input type="password" id="password" placeholder="Mot de passe" class="input" autocomplete="current-password">
+        <button id="loginBtn" class="btn btn-primary">Se connecter</button>
+        <button id="registerBtn" class="btn btn-secondary">S'inscrire</button>
+    </div>
+</div>
+
+<!-- TABLEAU DE BORD -->
+<div id="dashboardScreen" style="display: none;">
+    <header>
+        <h1>💰 Mon Budget IA</h1>
+        <div class="user-info">
+            <span id="userEmail"></span>
+            <div class="balances" id="balances"></div>
+            <button id="logoutBtn" class="btn-logout">Déconnexion</button>
+        </div>
+    </header>
+
+    <!-- Filtres période -->
+    <div class="filters-bar">
+        <div class="filter-group">
+            <button class="filter-btn" data-period="week">📅 Cette semaine</button>
+            <button class="filter-btn active" data-period="month">📆 Ce mois</button>
+            <button class="filter-btn" data-period="year">📅 Cette année</button>
+        </div>
+        <div class="filter-group custom-range">
+            <input type="date" id="dateDebut">
+            <span>→</span>
+            <input type="date" id="dateFin">
+            <button id="applyCustomBtn" class="btn-small">Appliquer</button>
+        </div>
+    </div>
+
+    <!-- Stats rapides -->
+    <div class="stats-grid" id="statsContainer"></div>
+
+    <!-- Zone principale : Chat + Graphiques -->
+    <div class="main-grid">
+        <div class="chat-section">
+            <div class="chat-messages" id="chatMessages">
+                <div class="system-msg">👋 Bonjour ! Demandez-moi : "sandwich 1000F cash", "épargne 5000F", "combien ce mois ?", "prévision", "meilleurs jours"...</div>
+            </div>
+            <div class="chat-input">
+                <input type="text" id="userInput" placeholder="Ex: sandwich 1000F cash" autocomplete="off">
+                <button id="sendBtn">Envoyer</button>
+            </div>
+        </div>
+        <div class="charts-section">
+            <canvas id="expensesChart" width="400" height="300"></canvas>
+            <div id="insightsBox" class="insights-box">
+                <h3>📊 Analyses IA</h3>
+                <div id="insightsContent">Sélectionnez une période</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dernières transactions -->
+    <div class="transactions-header">
+        <h2>📋 Dernières transactions</h2>
+        <button id="manageCategoriesBtn" class="btn-small">Gérer catégories</button>
+    </div>
+    <div class="transactions-list" id="transactionsList"></div>
+
+    <!-- Modal gestion catégories -->
+    <div id="categoriesModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h3>Mes catégories</h3>
+            <div id="categoriesList"></div>
+            <div class="add-category">
+                <input type="text" id="newCategoryName" placeholder="Nouvelle catégorie">
+                <input type="text" id="newCategoryIcon" placeholder="Icône (ex: 🎓)" maxlength="2">
+                <button id="addCategoryBtn">Ajouter</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
