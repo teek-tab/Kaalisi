@@ -206,7 +206,7 @@ function updateTransactionsList() {
                     <br><small>${account.name}</small>
                 </div>
                 <div style="display:flex;align-items:center;gap:12px;">
-                    <span style="font-weight:bold;color:${t.type === 'expense' ? '#ef4444' : '#10b981'}">
+                    <span class="transaction-amount ${t.type === 'expense' ? 'expense' : 'income'}">
                         ${t.type === 'expense' ? '-' : '+'} ${t.amount} F
                     </span>
                     <button class="btn-icon" onclick="editTransaction('${t.id}')" title="Modifier">✏️</button>
