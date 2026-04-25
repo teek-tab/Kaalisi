@@ -274,7 +274,7 @@ async function executeInstruction(inst) {
                 addChatMessage('ai', inst.message);
                 break;
             default:
-                addChatMessage('ai', "❓ Je n'ai pas compris. Reformulez (ex: "sandwich 1000F cash", "supprime la dernière", "modifie en wave").");
+                addChatMessage('ai', '❓ Je n\'ai pas compris. Reformulez (ex: sandwich 1000F cash, supprime la dernière, modifie en wave).');
         }
     } catch (err) {
         console.error('Execute error:', err);
