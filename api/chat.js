@@ -2,25 +2,24 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
     process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
-    {
-        auth: {
-            persistSession: false,
-            autoRefreshToken: false
-        },
-        global: {
-            headers: {
-                Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`
-            }
-        }
-    }
+    process.env.SUPABASE_SERVICE_KEY
 );
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
+    // Vérifier que le body est bien parsé
+    if (!req.body || typeof req.body !== 'object') {
+        return res.status(400).json({ error: 'Body manquant ou invalide' });
+    }
+
     const { message, userId, periode } = req.body;
+
+    if (!message || !userId) {
+        return res.status(400).json({ error: 'message et userId requis' });
+    }
 
     const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
     if (!DEEPSEEK_API_KEY) {
@@ -142,6 +141,16 @@ Ne pose pas de questions inutiles. Devine quand possible. Réponds UNIQUEMENT en
         });
 
         const data = await response.json();
+
+        // Vérifier si DeepSeek a retourné une erreur
+        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+            console.error('DeepSeek error response:', data);
+            return res.status(200).json({ 
+                action: 'answer', 
+                message: '❌ L'IA est temporairement indisponible. Réessayez dans un moment.' 
+            });
+        }
+
         const raw = data.choices[0].message.content;
 
         // Extraire le JSON
@@ -175,6 +184,12 @@ Ne pose pas de questions inutiles. Devine quand possible. Réponds UNIQUEMENT en
 
     } catch (err) {
         console.error('Chat error:', err);
-        res.status(500).json({ action: 'answer', message: 'Erreur serveur, veuillez réessayer.' });
+        // S'assurer qu'on retourne toujours du JSON valide
+        try {
+            res.status(500).json({ action: 'answer', message: 'Erreur serveur, veuillez réessayer.' });
+        } catch (resErr) {
+            // Si res.json() fail, retourner du texte brut
+            res.status(500).send(JSON.stringify({ action: 'answer', message: 'Erreur serveur.' }));
+        }
     }
 }
