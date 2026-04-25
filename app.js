@@ -1,6 +1,7 @@
 // ==================== CONFIGURATION ====================
-const SUPABASE_URL = 'VOTRE_URL_SUPABASE';      // À remplacer
-const SUPABASE_ANON_KEY = 'VOTRE_CLE_ANON';    // À remplacer
+const SUPABASE_URL = 'https://vsvvtyjbdrldlcswujzg.supabase.co';
+
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZzdnZ0eWpiZHJsZGxjc3d1anpnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxNDUyNTEsImV4cCI6MjA5MjcyMTI1MX0.YgkmLIoPJi3FQI6LvBVudB76LkMjR2Jywr8SZjNj1no'; 
 
 const { createClient } = window.supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
