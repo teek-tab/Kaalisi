@@ -1,0 +1,75 @@
+/* ==================== CORRECTION DÉFILEMENT - AJOUTER À LA FIN DE VOTRE CSS ==================== */
+
+/* 
+ * PROBLÈME: La barre de navigation fixed recouvre le contenu en bas.
+ * SOLUTION: Padding-bottom suffisant + spacer de sécurité.
+ */
+
+/* CORRECTION 1: Augmenter la hauteur de nav et le padding */
+:root {
+    --nav-h: 80px; /* Augmenté de 72px à 80px */
+    --nav-safe-area: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 20px);
+}
+
+/* CORRECTION 2: Padding-bottom généreux pour page-scroll */
+.page-scroll {
+    padding: 16px 16px var(--nav-safe-area) 16px !important;
+    /* Le !important s'assure qu'aucune autre règle ne l'écrase */
+}
+
+/* CORRECTION 3: Spacer invisible à la fin de chaque contenu scrollable */
+.page-scroll::after {
+    content: '';
+    display: block;
+    height: calc(var(--nav-h) + 40px); /* Espace supplémentaire de sécurité */
+    flex-shrink: 0;
+}
+
+/* CORRECTION 4: S'assurer que le dernier élément n'est pas collé */
+.page-scroll > *:last-child {
+    margin-bottom: calc(var(--nav-h) + 20px);
+}
+
+/* CORRECTION 5: Pour desktop, ajuster aussi */
+@media (min-width: 768px) {
+    .page-scroll {
+        padding-bottom: 40px !important;
+    }
+    .page-scroll::after {
+        display: none; /* Pas besoin sur desktop */
+    }
+    .page-scroll > *:last-child {
+        margin-bottom: 0;
+    }
+}
+
+/* CORRECTION 6: S'assurer que tab-content permet bien le scroll */
+.tab-content.active {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+/* CORRECTION 7: Le conteneur de scroll doit prendre tout l'espace disponible */
+.page-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* CORRECTION 8: Pour les listes de transactions, ajouter de l'espace en bas */
+.tx-list,
+.recent-list,
+.stats-kpis,
+.accounts-scroll {
+    padding-bottom: 8px;
+}
+
+/* CORRECTION 9: Empêcher la nav de masquer le contenu sur iOS */
+@supports (-webkit-touch-callout: none) {
+    .page-scroll {
+        padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 30px) !important;
+    }
+}
