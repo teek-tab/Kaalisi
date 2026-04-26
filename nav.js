@@ -486,8 +486,11 @@ function exportCSV() {
 
 // ==================== PATCH APP.JS (overrides) ====================
 
+// Sauvegarde de la fonction originale de app.js AVANT de la surcharger
+const originalUpdateBalances = window.updateBalancesDisplay;
+
 window.updateBalancesDisplay = function() {
-    if (window._origUpdateBalances) window._origUpdateBalances();
+    if (originalUpdateBalances) originalUpdateBalances();
     renderAccountCards();
     const badge = document.getElementById('userEmailShort');
     if (badge && window.currentUser) {
