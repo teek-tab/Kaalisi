@@ -16,9 +16,9 @@ let abortController = null;
 // État du tableau
 let currentPage = 1;
 const rowsPerPage = 10;
-let filterType = 'all';     // 'all', 'expense', 'income'
-let sortColumn = 'date';    // 'date', 'amount', 'category'
-let sortOrder = 'desc';     // 'asc' ou 'desc'
+let filterType = 'all';
+let sortColumn = 'date';
+let sortOrder = 'desc';
 
 // DOM
 const authScreen = document.getElementById('authScreen');
@@ -122,7 +122,7 @@ async function loadTransactions() {
     transactionsData = data || [];
 }
 
-// ==================== STATS + CHART ====================
+// ==================== STATS ====================
 function updateStats() {
     let total = 0, income = 0;
     transactionsData.forEach(t => { if (t.type==='expense') total+=t.amount; if (t.type==='income') income+=t.amount; });
@@ -154,18 +154,16 @@ async function generateInsights() {
         <p>💡 ${moy>5000?'Dépenses élevées !':'Bon contrôle du budget !'}</p>`;
 }
 
-// ==================== TABLEAU AVEC PAGINATION, FILTRES, TRIS ====================
+// ==================== TABLEAU ====================
 function updateTransactionsTable() {
     const tbody = document.getElementById('transactionsTableBody');
     const paginationDiv = document.getElementById('transactionsPagination');
     if (!tbody || !paginationDiv) return;
 
-    // Filtrer
     let filtered = [...transactionsData];
     if (filterType === 'expense') filtered = filtered.filter(t => t.type === 'expense');
     else if (filterType === 'income') filtered = filtered.filter(t => t.type === 'income');
 
-    // Trier
     filtered.sort((a,b) => {
         let valA, valB;
         if (sortColumn === 'date') {
@@ -181,15 +179,13 @@ function updateTransactionsTable() {
         return 0;
     });
 
-    // Paginer
     const totalPages = Math.ceil(filtered.length / rowsPerPage) || 1;
     if (currentPage > totalPages) currentPage = 1;
     const start = (currentPage-1)*rowsPerPage;
     const pageRows = filtered.slice(start, start+rowsPerPage);
 
-    // Remplir tableau
     if (pageRows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty-table">Aucune transaction pour cette période</td></tr>';
+        tbody.innerHTML = '<td><td colspan="6" class="empty-table">Aucune transaction</td></tr>';
     } else {
         tbody.innerHTML = pageRows.map(t => {
             const cat = t.categories || { name: 'Autres', icon: '📦' };
@@ -204,15 +200,14 @@ function updateTransactionsTable() {
                     <td>${acc.name}</td>
                     <td title="${t.description || ''}">${(t.description || '').substring(0,30)}${(t.description?.length||0)>30?'…':''}</td>
                     <td class="table-actions">
-                        <button class="btn-icon" onclick="editTransaction('${t.id}')" title="Modifier">✏️</button>
-                        <button class="btn-icon" onclick="deleteTransaction('${t.id}')" title="Supprimer">🗑️</button>
+                        <button class="btn-icon" onclick="editTransaction('${t.id}')">✏️</button>
+                        <button class="btn-icon" onclick="deleteTransaction('${t.id}')">🗑️</button>
                     </td>
                 </tr>
             `;
         }).join('');
     }
 
-    // Pagination
     paginationDiv.innerHTML = `
         <div class="pagination-info">${filtered.length} transaction(s) — Page ${currentPage} / ${totalPages}</div>
         <div class="pagination-buttons">
@@ -259,7 +254,7 @@ function setSort(column) {
     });
 }
 
-// ==================== CHAT IA ====================
+// ==================== CHAT ====================
 let msgCounter = 0;
 let waitingForResponse = false;
 
@@ -280,7 +275,7 @@ async function sendMessage() {
     if (waitingForResponse) {
         if (abortController) {
             abortController.abort();
-            addChatMessage('system', '⏹️ Annulé par l’utilisateur.', true);
+            addChatMessage('system', '⏹️ Annulé.', true);
             waitingForResponse = false;
         }
         return;
@@ -328,15 +323,44 @@ async function executeInstruction(inst) {
             case 'update_transaction': await handleUpdateTransaction(inst); break;
             case 'add_account': await handleAddAccount(inst); break;
             case 'update_account': await handleUpdateAccount(inst); break;
-            case 'query': handleQuery(inst); break;
-            case 'clarify': addChatMessage('ai', inst.message||'Précisez svp.'); break;
-            case 'answer': addChatMessage('ai', inst.message||''); break;
-            default: addChatMessage('ai', "Je n'ai pas compris. Reformulez.");
+            case 'fetch_balance':
+                let totalBalance = 0;
+                for (let acc of accountsMap.values()) totalBalance += acc.balance;
+                addChatMessage('ai', `💰 Solde total : ${totalBalance.toFixed(0)} F`);
+                break;
+            case 'query':
+                if (inst.type === 'total') {
+                    const total = transactionsData.reduce((s, t) => t.type === 'expense' ? s + t.amount : s, 0);
+                    addChatMessage('ai', `📊 Total dépenses : ${total.toFixed(0)} F`);
+                } else if (inst.type === 'forecast') {
+                    const today = new Date(), dim = new Date(today.getFullYear(), today.getMonth()+1, 0).getDate(), dp = today.getDate();
+                    const ts = transactionsData.reduce((s, t) => t.type === 'expense' ? s + t.amount : s, 0);
+                    const fc = Math.round((ts/(dp||1))*(dim-dp));
+                    addChatMessage('ai', `📈 Prévision fin de mois : ~${fc}F supplémentaires.`);
+                } else if (inst.type === 'best_days') {
+                    const dm = new Map();
+                    transactionsData.forEach(t => { if(t.type==='expense') { const d = new Date(t.date).getDay(); dm.set(d, (dm.get(d)||0)+t.amount); } });
+                    let bd = null, bv = Infinity;
+                    for (let [d, v] of dm) { if(v < bv) { bv = v; bd = d; } }
+                    const days = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+                    addChatMessage('ai', bd !== null ? `🔥 Moins de dépenses le ${days[bd]} (${bv}F).` : "Pas assez de données.");
+                } else {
+                    addChatMessage('ai', inst.message || 'Analyse effectuée.');
+                }
+                break;
+            case 'clarify':
+                addChatMessage('ai', inst.message || 'Précisez svp.');
+                break;
+            case 'answer':
+                addChatMessage('ai', inst.message || '');
+                break;
+            default:
+                addChatMessage('ai', "Je n'ai pas compris. Reformulez.");
         }
     } catch(err) { console.error(err); addChatMessage('ai','❌ Erreur exécution.'); }
 }
 
-// ==================== GESTION DES TRANSACTIONS ====================
+// ==================== TRANSACTIONS ====================
 async function handleAddTransaction(inst) {
     let catId = null;
     for (let [id,cat] of categoriesMap.entries()) { if (cat.name.toLowerCase()===(inst.category||'').toLowerCase()) { catId=id; break; } }
@@ -440,25 +464,7 @@ async function handleUpdateAccount(inst) {
     if(!error){const a=accountsMap.get(accId);a.name=newName;if(inst.balance!==undefined)a.balance=inst.balance;updateBalancesDisplay();addChatMessage('ai',`🏦 Renommé : "${inst.old_name}" → "${newName}".`);}
 }
 
-function handleQuery(inst) {
-    if(inst.type==='total'){
-        const t=transactionsData.reduce((s,t)=>t.type==='expense'?s+t.amount:s,0);
-        addChatMessage('ai',inst.message||`📊 Total dépenses : ${t}F`);
-    } else if(inst.type==='forecast'){
-        const today=new Date(), dim=new Date(today.getFullYear(),today.getMonth()+1,0).getDate(), dp=today.getDate();
-        const ts=transactionsData.reduce((s,t)=>t.type==='expense'?s+t.amount:s,0);
-        const fc=Math.round((ts/(dp||1))*(dim-dp));
-        addChatMessage('ai',`📈 Prévision fin de mois : ~${fc}F supplémentaires (total ~${ts+fc}F).`);
-    } else if(inst.type==='best_days'){
-        const dm=new Map();
-        transactionsData.forEach(t=>{if(t.type==='expense'){const d=new Date(t.date).getDay();dm.set(d,(dm.get(d)||0)+t.amount);}});
-        let bd=null,bv=Infinity;for(let [d,v] of dm){if(v<bv){bv=v;bd=d;}}
-        const days=['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
-        addChatMessage('ai',bd!==null?`🔥 Moins de dépenses le ${days[bd]} (${bv}F).`:"Pas assez de données.");
-    } else { addChatMessage('ai',inst.message||'Analyse effectuée.'); }
-}
-
-// ==================== MODALS ET ÉDITION ====================
+// ==================== MODALS ====================
 function openTransactionModal(mode='add', transactionId=null) {
     const modal=document.getElementById('transactionModal');
     document.getElementById('transactionModalTitle').textContent=mode==='edit'?'✏️ Modifier':'➕ Ajouter transaction';
@@ -491,7 +497,7 @@ async function saveTransactionForm() {
     closeModal('transactionModal'); await refreshDashboard();
 }
 window.editTransaction = async function(id) { openTransactionModal('edit', id); };
-window.deleteTransaction = async function(id) { if(!confirm('Supprimer cette transaction ?')) return; await handleDeleteTransaction({transaction_id:id}); await refreshDashboard(); };
+window.deleteTransaction = async function(id) { if(!confirm('Supprimer ?')) return; await handleDeleteTransaction({transaction_id:id}); await refreshDashboard(); };
 
 function openAccountsModal(){
     const modal=document.getElementById('accountsModal'), listDiv=document.getElementById('accountsList');
