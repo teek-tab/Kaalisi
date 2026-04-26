@@ -170,7 +170,6 @@ Message: "${message}"`;
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     const result = jsonMatch ? JSON.parse(jsonMatch[0]) : { action: 'answer', message: raw, requiresConfirmation: false };
     
-    // Traiter fetch_transactions
     if (result.action === 'fetch_transactions') {
         const messageText = await handleFetchTransactions(userId, periode, result.filter || {});
         result.action = 'answer';
@@ -207,6 +206,24 @@ Catégories disponibles: ${categoriesList}
 Actions récentes exécutées:
 ${recentActionsText || 'Aucune'}
 
+=== SCHÉMA DE LA BASE DE DONNÉES ===
+
+Table "transactions":
+- id (uuid) - identifiant unique
+- user_id (uuid) - votre ID utilisateur
+- amount (integer) - montant en francs CFA
+- type (text) - 'expense' (dépense) ou 'income' (revenu)
+- description (text) - texte libre
+- date (date) - format YYYY-MM-DD
+- category_id (uuid) - référence à categories(id)
+- account_id (uuid) - référence à accounts(id)
+
+Table "accounts":
+- id (uuid), name (text), balance (integer)
+
+Table "categories":
+- id (uuid), name (text), icon (text)
+
 === RÈGLES PRIORITAIRES ===
 ⚠️ Si l'utilisateur dit "non", "en fait", "c'était", "plutôt", "corrige", "annule" → C'est une CORRECTION de la dernière action.
    Pour corriger un montant: {"action":"update_transaction","transaction_id":"ID","fields_to_update":{"amount":NOUVEAU}}
@@ -220,7 +237,7 @@ ${recentActionsText || 'Aucune'}
 2. REVENU unique:
 {"action":"add_income","amount":500000,"description":"salaire","category":"Salaire","account":"wave","requiresConfirmation":true,"confirmationMessage":"💰 Ajouter 500000F de revenu (Salaire) sur wave ?"}
 
-3. ACTIONS MULTIPLES (ET):
+3. ACTIONS MULTIPLES (quand l'utilisateur dit "ET"):
 {"actions":[
     {"action":"add_expense","amount":200,"description":"pain","category":"Courses","account":"cash","requiresConfirmation":true},
     {"action":"add_expense","amount":500,"description":"saucisson","category":"Courses","account":"cash","requiresConfirmation":true}
