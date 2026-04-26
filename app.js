@@ -622,33 +622,44 @@ window.loadPeriod = loadPeriod;
 
 async function refreshDashboard() {
     if (refreshPromise) return refreshPromise;
-
+    
     refreshPromise = (async () => {
         try {
+            // 1. Charger les données
             await loadTransactions();
             await loadUserData();
-            // Les fonctions de rendu sont définies dans nav.js
-            if (typeof renderHomeSummary       === 'function') renderHomeSummary();
+            
+            // 2. Mettre à jour l'affichage principal (ACCUEIL)
+            if (typeof renderHomeSummary === 'function') renderHomeSummary();
             if (typeof renderRecentTransactions === 'function') renderRecentTransactions();
-            if (typeof updateTransactionsTable  === 'function') updateTransactionsTable();
-            if (document.getElementById('tab-stats')?.classList.contains('active')) {
+            if (typeof renderAccountCards === 'function') renderAccountCards();
+            
+            // 3. Mettre à jour le tableau des transactions
+            if (typeof updateTransactionsTable === 'function') updateTransactionsTable();
+            
+            // 4. Mettre à jour l'onglet STATS s'il est actif
+            const statsTab = document.getElementById('tab-stats');
+            if (statsTab && statsTab.classList.contains('active')) {
                 if (typeof renderStatsTab === 'function') renderStatsTab();
             }
-            if (document.getElementById('tab-settings')?.classList.contains('active')) {
+            
+            // 5. Mettre à jour l'onglet PARAMÈTRES s'il est actif
+            const settingsTab = document.getElementById('tab-settings');
+            if (settingsTab && settingsTab.classList.contains('active')) {
                 if (typeof renderSettingsTab === 'function') renderSettingsTab();
             }
+            
         } catch (err) {
             console.error('[REFRESH] Erreur:', err);
         }
     })();
-
+    
     try {
         await refreshPromise;
     } finally {
         refreshPromise = null;
     }
 }
-
 async function loadTransactions() {
     const cacheKey = `${currentUser.id}_${currentPeriode.debut}_${currentPeriode.fin}`;
     const now = Date.now();
