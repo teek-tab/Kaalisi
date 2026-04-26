@@ -1,5 +1,3 @@
-// ==================== NAV.JS - UNIQUEMENT DES FONCTIONS, PAS DE VARIABLES GLOBALES ====================
-
 // Initialisation du thème (sans créer de nouvelle variable globale)
 (function initTheme() {
     const toggle = document.getElementById('themeToggle');
