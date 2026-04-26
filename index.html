@@ -48,6 +48,7 @@
             <span class="app-name">KAALISI</span>
         </div>
         <div class="top-bar-right">
+            <button id="themeToggle" class="theme-btn">🌙</button>
             <span id="userEmailShort" class="user-badge"></span>
         </div>
     </div>
@@ -55,12 +56,8 @@
     <!-- ==================== ONGLET ACCUEIL ==================== -->
     <div id="tab-home" class="tab-content active">
         <div class="page-scroll">
-
-            <!-- Cartes soldes -->
             <div class="section-label">Mes comptes</div>
             <div class="accounts-scroll" id="accountsCards"></div>
-
-            <!-- Résumé du mois -->
             <div class="section-label">Ce mois</div>
             <div class="summary-grid" id="homeSummary">
                 <div class="summary-card summary-expense">
@@ -84,8 +81,6 @@
                     <div class="summary-amount" id="homeAvg">—</div>
                 </div>
             </div>
-
-            <!-- Chat IA -->
             <div class="section-label">Assistant IA</div>
             <div class="chat-card">
                 <div class="chat-messages" id="chatMessages">
@@ -99,37 +94,28 @@
                     <button id="sendBtn" class="send-btn">↑</button>
                 </div>
             </div>
-
-            <!-- Dernières transactions -->
             <div class="section-label-row">
                 <span class="section-label" style="margin:0">Récentes</span>
                 <button class="see-all-btn" onclick="switchTab('transactions')">Voir tout →</button>
             </div>
             <div class="recent-list" id="recentTransactions"></div>
-
         </div>
     </div>
 
     <!-- ==================== ONGLET TRANSACTIONS ==================== -->
     <div id="tab-transactions" class="tab-content">
         <div class="page-scroll">
-
-            <!-- Filtres période -->
             <div class="filter-pills-row">
                 <button class="pill active" data-period="week" onclick="loadPeriod('week')">Semaine</button>
                 <button class="pill" data-period="month" onclick="loadPeriod('month')">Mois</button>
                 <button class="pill" data-period="year" onclick="loadPeriod('year')">Année</button>
             </div>
-
-            <!-- Filtres custom date -->
             <div class="date-range-row">
                 <input type="date" id="dateDebut" class="date-input">
                 <span class="date-sep">→</span>
                 <input type="date" id="dateFin" class="date-input">
                 <button id="applyCustomBtn" class="pill-btn">OK</button>
             </div>
-
-            <!-- Filtres type + actions -->
             <div class="tx-actions-row">
                 <div class="type-pills">
                     <button class="type-pill active" data-type="all" onclick="setFilterType('all')">Toutes</button>
@@ -138,58 +124,40 @@
                 </div>
                 <button id="addTransactionBtn" class="fab-inline">＋ Ajouter</button>
             </div>
-
-            <!-- Tableau transactions -->
             <div class="tx-list" id="transactionsTableBody"></div>
             <div id="transactionsPagination" class="pagination-row"></div>
-
         </div>
     </div>
 
     <!-- ==================== ONGLET STATS ==================== -->
     <div id="tab-stats" class="tab-content">
         <div class="page-scroll">
-
-            <!-- Filtre période stats -->
             <div class="filter-pills-row">
                 <button class="pill active" data-period="week" onclick="loadPeriodStats('week')">Semaine</button>
                 <button class="pill" data-period="month" onclick="loadPeriodStats('month')">Mois</button>
                 <button class="pill" data-period="year" onclick="loadPeriodStats('year')">Année</button>
             </div>
-
-            <!-- KPIs stats -->
             <div class="stats-kpis" id="statsKpis"></div>
-
-            <!-- Donut -->
             <div class="section-label">Dépenses par catégorie</div>
             <div class="chart-card">
                 <canvas id="expensesChart"></canvas>
             </div>
-
-            <!-- Courbe évolution -->
             <div class="section-label">Évolution du solde</div>
             <div class="chart-card">
                 <canvas id="balanceChart"></canvas>
             </div>
-
-            <!-- Comparaison mois précédent -->
             <div class="section-label">vs mois précédent</div>
             <div class="compare-card" id="compareCard"></div>
-
-            <!-- Insights IA -->
             <div class="section-label">Analyse IA</div>
             <div class="insights-card" id="insightsBox">
                 <div id="insightsContent">Sélectionnez une période</div>
             </div>
-
         </div>
     </div>
 
     <!-- ==================== ONGLET PARAMÈTRES ==================== -->
     <div id="tab-settings" class="tab-content">
         <div class="page-scroll">
-
-            <!-- Profil -->
             <div class="settings-profile-card">
                 <div class="profile-avatar">💰</div>
                 <div class="profile-info">
@@ -198,18 +166,12 @@
                 </div>
                 <button id="logoutBtn" class="logout-btn">Déco.</button>
             </div>
-
-            <!-- Comptes -->
             <div class="section-label">Comptes</div>
             <div class="settings-section" id="accountsListSettings"></div>
             <button class="settings-add-btn" id="openAddAccountBtn">＋ Ajouter un compte</button>
-
-            <!-- Catégories -->
             <div class="section-label">Catégories</div>
             <div class="settings-section" id="categoriesListSettings"></div>
             <button class="settings-add-btn" id="openAddCategoryBtn">＋ Ajouter une catégorie</button>
-
-            <!-- Export -->
             <div class="section-label">Données</div>
             <div class="settings-section">
                 <button class="settings-row-btn" onclick="exportCSV()">
@@ -217,11 +179,10 @@
                     <span class="arrow">›</span>
                 </button>
             </div>
-
         </div>
     </div>
 
-    <!-- ==================== BOTTOM NAV ==================== -->
+    <!-- ==================== BOTTOM NAV / SIDEBAR ==================== -->
     <nav class="bottom-nav">
         <button class="nav-btn active" onclick="switchTab('home')" data-tab="home">
             <span class="nav-icon">🏠</span>
@@ -240,12 +201,9 @@
             <span class="nav-label">Paramètres</span>
         </button>
     </nav>
-
 </div>
 
 <!-- ==================== MODALS ==================== -->
-
-<!-- Modal Transaction -->
 <div id="transactionModal" class="modal">
     <div class="modal-sheet">
         <div class="modal-handle"></div>
@@ -287,7 +245,6 @@
     </div>
 </div>
 
-<!-- Modal Ajouter compte -->
 <div id="addAccountModal" class="modal">
     <div class="modal-sheet">
         <div class="modal-handle"></div>
@@ -307,7 +264,6 @@
     </div>
 </div>
 
-<!-- Modal Ajouter catégorie -->
 <div id="addCategoryModal" class="modal">
     <div class="modal-sheet">
         <div class="modal-handle"></div>
