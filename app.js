@@ -15,11 +15,11 @@ let lastCreatedTransactionId = null;
 let conversationMessages = [];
 let lastExecutedActions = [];
 
-// ========== GESTION CONFIRMATION ==========
+// Gestion confirmation
 let pendingAction = null;
 let waitingForConfirmation = false;
 
-// ========== CACHE & VERROUS ==========
+// Cache
 let refreshPromise = null;
 let lastUserDataLoad = 0;
 const USER_DATA_CACHE_MS = 30000;
@@ -87,20 +87,19 @@ function resetConversation() {
 }
 
 function getActionDescription(inst) {
-    // Gestion des actions multiples (tableau)
     if (Array.isArray(inst)) {
         if (inst.length === 0) return "Aucune action";
         if (inst.length === 1) return getActionDescription(inst[0]);
         return `${inst.length} actions :\n${inst.map((a, i) => `  ${i+1}. ${getActionDescription(a)}`).join('\n')}`;
     }
-    // Actions uniques
     switch (inst.action) {
         case 'add_expense': return `Ajouter ${inst.amount}F pour ${inst.description || inst.category || '?'} (${inst.category || 'Autres'}) sur ${inst.account || 'cash'}`;
         case 'add_income': return `Ajouter ${inst.amount}F de revenu (${inst.category || 'Autres'}) sur ${inst.account || 'cash'}`;
         case 'add_to_savings': return `Transférer ${inst.amount}F vers l'épargne depuis ${inst.source || 'cash'}`;
-        case 'delete_transaction': return `Supprimer la transaction${inst.transaction_id ? ` #${inst.transaction_id.slice(-4)}` : ''}`;
-        case 'update_transaction': return `Modifier la transaction${inst.transaction_id ? ` #${inst.transaction_id.slice(-4)}` : ''}`;
-        case 'update_account': return `Renommer le compte "${inst.old_name}" en "${inst.new_name}"`;
+        case 'delete_transaction': return `Supprimer la transaction`;
+        case 'delete_query': return `Supprimer ${inst.query?.filter?.category ? `les ${inst.query.filter.category}` : 'les transactions'} du ${inst.query?.filter?.date || '?'}`;
+        case 'update_transaction': return `Modifier la transaction`;
+        case 'update_query': return `Modifier ${inst.query?.filter?.category ? `les ${inst.query.filter.category}` : 'les transactions'} du ${inst.query?.filter?.date || '?'}`;
         default: return inst.action || 'Action';
     }
 }
@@ -113,7 +112,6 @@ async function sendMessage() {
     addChatMessage('user', message);
     userInput.value = '';
 
-    // Si on attend une confirmation, c'est une réponse
     if (waitingForConfirmation && pendingAction) {
         await handleConfirmationResponse(message);
         return;
@@ -128,12 +126,10 @@ async function sendMessage() {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
     try {
-        // Déterminer le type d'appel
-        const isWriteAction = message.match(/\b(ajoute|ajouter|dépense|dépenser|revenu|supprime|supprimer|modifie|modifier|transfert|épargne)\b/i);
+        const isWriteAction = message.match(/\b(ajoute|ajouter|dépense|dépenser|revenu|supprime|supprimer|modifie|modifier|transfert|épargne|corrige|annule)\b/i);
         
         let response;
         if (isWriteAction) {
-            // Appel à understand
             const res = await fetch('/api/chat?type=understand', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -148,7 +144,6 @@ async function sendMessage() {
             });
             response = await res.json();
         } else {
-            // Appel normal (lecture seule)
             const res = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -168,7 +163,7 @@ async function sendMessage() {
         
         tempDiv.remove();
 
-        // ✅ Gérer les actions multiples (tableau)
+        // Actions multiples
         if (response.actions && Array.isArray(response.actions)) {
             pendingAction = response.actions;
             waitingForConfirmation = true;
@@ -178,7 +173,7 @@ async function sendMessage() {
             return;
         }
         
-        // Gérer une action unique avec confirmation
+        // Action unique avec confirmation
         if (response.requiresConfirmation === true && response.action) {
             pendingAction = response;
             waitingForConfirmation = true;
@@ -188,7 +183,7 @@ async function sendMessage() {
             return;
         }
         
-        // Gérer les réponses sans confirmation (lecture seule)
+        // Réponse simple
         if (response.action === 'answer' && response.message) {
             addChatMessage('ai', response.message);
             conversationMessages.push({ role: 'assistant', content: response.message });
@@ -231,14 +226,13 @@ async function handleConfirmationResponse(response) {
         tempDiv.remove();
 
         if (result.actionExecuted) {
-            // Exécuter l'action (unique ou tableau)
             await executeRealAction(result.actionExecuted);
             
-            // Stocker dans historique (pour une action unique, sinon on stocke la première?)
             if (!Array.isArray(result.actionExecuted)) {
                 lastExecutedActions.unshift({
                     action: result.actionExecuted.action,
                     transaction_id: lastCreatedTransactionId,
+                    amount: result.actionExecuted.amount,
                     timestamp: Date.now()
                 });
                 if (lastExecutedActions.length > 5) lastExecutedActions.pop();
@@ -251,7 +245,6 @@ async function handleConfirmationResponse(response) {
             pendingAction = null;
             
         } else if (result.updatedAction) {
-            // Modification de l'action
             pendingAction = result.updatedAction;
             addChatMessage('ai', result.newConfirmationMessage);
             conversationMessages.push({ role: 'assistant', content: result.newConfirmationMessage });
@@ -277,25 +270,18 @@ async function handleConfirmationResponse(response) {
     }
 }
 
-// ==================== EXÉCUTION DB (avec gestion tableau) ====================
+// ==================== EXÉCUTION DB (avec toutes les actions) ====================
 async function executeRealAction(action) {
-    // ✅ Gestion des actions multiples (tableau)
+    // Actions multiples
     if (Array.isArray(action)) {
-        console.log(`📋 Exécution de ${action.length} actions multiples...`);
         for (const singleAction of action) {
-            try {
-                await executeRealAction(singleAction);
-            } catch (err) {
-                console.error(`❌ Erreur sur une action multiple:`, err);
-                throw new Error(`Erreur sur une action : ${err.message}`);
-            }
+            await executeRealAction(singleAction);
         }
-        console.log(`✅ ${action.length} actions exécutées avec succès`);
         return;
     }
     
-    // Action unique
-    console.log(`🎯 Exécution action unique: ${action.action}`);
+    console.log('🎯 Exécution:', action.action);
+    
     switch (action.action) {
         case 'add_expense':
         case 'add_income':
@@ -304,30 +290,46 @@ async function executeRealAction(action) {
         case 'delete_transaction':
             await handleDeleteTransaction(action);
             break;
+        case 'delete_query':
+            await handleDeleteQuery(action);
+            break;
         case 'update_transaction':
             await handleUpdateTransaction(action);
+            break;
+        case 'update_query':
+            await handleUpdateQuery(action);
             break;
         case 'add_to_savings':
             await handleAddToSavings(action);
             break;
-        case 'update_account':
-            await handleUpdateAccount(action);
-            break;
         default:
-            console.warn('⚠️ Action non gérée:', action.action);
-            throw new Error(`Action non supportée: ${action.action}`);
+            console.warn('Action non gérée:', action.action);
     }
 }
 
 async function handleAddTransaction(inst) {
     let catId = null;
-    for (let [id, cat] of categoriesMap) if (cat.name.toLowerCase() === (inst.category || '').toLowerCase()) { catId = id; break; }
+    for (let [id, cat] of categoriesMap) {
+        if (cat.name.toLowerCase() === (inst.category || '').toLowerCase()) {
+            catId = id;
+            break;
+        }
+    }
     if (!catId && inst.category) {
         const { data } = await db.from('categories').insert({ user_id: currentUser.id, name: inst.category, icon: '📌' }).select();
-        if (data?.[0]) { catId = data[0].id; categoriesMap.set(catId, data[0]); }
+        if (data?.[0]) {
+            catId = data[0].id;
+            categoriesMap.set(catId, data[0]);
+        }
     }
+    
     let accId = null;
-    for (let [id, acc] of accountsMap) if (acc.name === inst.account) { accId = id; break; }
+    for (let [id, acc] of accountsMap) {
+        if (acc.name === inst.account) {
+            accId = id;
+            break;
+        }
+    }
     if (!accId) throw new Error(`Compte "${inst.account}" introuvable`);
     
     const isIncome = inst.action === 'add_income';
@@ -355,7 +357,12 @@ async function handleAddTransaction(inst) {
 
 async function handleDeleteTransaction(inst) {
     const transId = inst.transaction_id;
-    const { data: t } = await db.from('transactions').select('*').eq('id', transId).eq('user_id', currentUser.id).single();
+    const { data: t } = await db.from('transactions')
+        .select('*')
+        .eq('id', transId)
+        .eq('user_id', currentUser.id)
+        .single();
+    
     if (!t) throw new Error('Transaction introuvable');
     
     const acc = accountsMap.get(t.account_id);
@@ -368,9 +375,75 @@ async function handleDeleteTransaction(inst) {
     await db.from('transactions').delete().eq('id', transId).eq('user_id', currentUser.id);
 }
 
+async function handleDeleteQuery(action) {
+    const { query } = action;
+    const filter = query.filter;
+    
+    let dbQuery = db.from('transactions').select('*, accounts(name, balance)').eq('user_id', currentUser.id);
+    
+    if (filter.date) dbQuery = dbQuery.eq('date', filter.date);
+    if (filter.type) dbQuery = dbQuery.eq('type', filter.type);
+    if (filter.category) {
+        let catId = null;
+        for (let [id, cat] of categoriesMap) {
+            if (cat.name.toLowerCase() === filter.category.toLowerCase()) {
+                catId = id;
+                break;
+            }
+        }
+        if (catId) dbQuery = dbQuery.eq('category_id', catId);
+    }
+    
+    const { data: transactions, error } = await dbQuery;
+    if (error) throw new Error(`Erreur: ${error.message}`);
+    if (!transactions || transactions.length === 0) {
+        throw new Error('Aucune transaction trouvée');
+    }
+    
+    // Restaurer les soldes
+    for (const t of transactions) {
+        const acc = accountsMap.get(t.account_id);
+        if (acc) {
+            if (t.type === 'income') {
+                acc.balance -= t.amount;
+            } else {
+                acc.balance += t.amount;
+            }
+            await db.from('accounts').update({ balance: acc.balance }).eq('id', t.account_id);
+        }
+    }
+    
+    // Supprimer
+    let deleteQuery = db.from('transactions').delete().eq('user_id', currentUser.id);
+    if (filter.date) deleteQuery = deleteQuery.eq('date', filter.date);
+    if (filter.type) deleteQuery = deleteQuery.eq('type', filter.type);
+    if (filter.category) {
+        let catId = null;
+        for (let [id, cat] of categoriesMap) {
+            if (cat.name.toLowerCase() === filter.category.toLowerCase()) {
+                catId = id;
+                break;
+            }
+        }
+        if (catId) deleteQuery = deleteQuery.eq('category_id', catId);
+    }
+    
+    const { error: deleteError } = await deleteQuery;
+    if (deleteError) throw new Error(`Erreur suppression: ${deleteError.message}`);
+    
+    updateBalancesDisplay();
+    await refreshDashboard();
+    addChatMessage('ai', `✅ ${transactions.length} transaction(s) supprimée(s).`);
+}
+
 async function handleUpdateTransaction(inst) {
     const transId = inst.transaction_id;
-    const { data: t } = await db.from('transactions').select('*').eq('id', transId).eq('user_id', currentUser.id).single();
+    const { data: t } = await db.from('transactions')
+        .select('*')
+        .eq('id', transId)
+        .eq('user_id', currentUser.id)
+        .single();
+    
     if (!t) throw new Error('Transaction introuvable');
     
     const fields = inst.fields_to_update || {};
@@ -391,10 +464,65 @@ async function handleUpdateTransaction(inst) {
     }
 }
 
+async function handleUpdateQuery(action) {
+    const { query } = action;
+    const filter = query.filter;
+    const update = query.update;
+    
+    let dbQuery = db.from('transactions').select('id, account_id, type, amount').eq('user_id', currentUser.id);
+    
+    if (filter.date) dbQuery = dbQuery.eq('date', filter.date);
+    if (filter.type) dbQuery = dbQuery.eq('type', filter.type);
+    if (filter.category) {
+        let catId = null;
+        for (let [id, cat] of categoriesMap) {
+            if (cat.name.toLowerCase() === filter.category.toLowerCase()) {
+                catId = id;
+                break;
+            }
+        }
+        if (catId) dbQuery = dbQuery.eq('category_id', catId);
+    }
+    
+    const { data: transactions, error } = await dbQuery;
+    if (error) throw new Error(`Erreur: ${error.message}`);
+    if (!transactions || transactions.length === 0) {
+        throw new Error('Aucune transaction trouvée');
+    }
+    
+    // Appliquer la mise à jour
+    if (update.category) {
+        let newCatId = null;
+        for (let [id, cat] of categoriesMap) {
+            if (cat.name.toLowerCase() === update.category.toLowerCase()) {
+                newCatId = id;
+                break;
+            }
+        }
+        if (!newCatId) {
+            const { data } = await db.from('categories').insert({ user_id: currentUser.id, name: update.category, icon: '📌' }).select();
+            if (data?.[0]) newCatId = data[0].id;
+        }
+        
+        if (newCatId) {
+            let updateQuery = db.from('transactions').update({ category_id: newCatId }).eq('user_id', currentUser.id);
+            if (filter.date) updateQuery = updateQuery.eq('date', filter.date);
+            if (filter.type) updateQuery = updateQuery.eq('type', filter.type);
+            await updateQuery;
+        }
+    }
+    
+    await refreshDashboard();
+    addChatMessage('ai', `✅ ${transactions.length} transaction(s) modifiée(s).`);
+}
+
 async function handleAddToSavings(inst) {
     const src = inst.source || 'cash';
     let srcId = null, epId = null;
-    for (let [id, a] of accountsMap) { if (a.name === src) srcId = id; if (a.name === 'epargne') epId = id; }
+    for (let [id, a] of accountsMap) {
+        if (a.name === src) srcId = id;
+        if (a.name === 'epargne') epId = id;
+    }
     if (!srcId || !epId) throw new Error('Compte introuvable');
     
     const srcAcc = accountsMap.get(srcId);
@@ -405,30 +533,6 @@ async function handleAddToSavings(inst) {
     await db.from('accounts').update({ balance: epAcc.balance + inst.amount }).eq('id', epId);
     srcAcc.balance -= inst.amount;
     epAcc.balance += inst.amount;
-    updateBalancesDisplay();
-}
-
-async function handleUpdateAccount(inst) {
-    const { old_name, new_name } = inst;
-    if (!old_name || !new_name) throw new Error('Noms de compte invalides');
-    
-    let accountId = null;
-    for (let [id, acc] of accountsMap) {
-        if (acc.name === old_name) {
-            accountId = id;
-            break;
-        }
-    }
-    if (!accountId) throw new Error(`Compte "${old_name}" introuvable`);
-    
-    const { error } = await db.from('accounts')
-        .update({ name: new_name })
-        .eq('id', accountId)
-        .eq('user_id', currentUser.id);
-    if (error) throw new Error(`Erreur mise à jour compte: ${error.message}`);
-    
-    const account = accountsMap.get(accountId);
-    if (account) account.name = new_name;
     updateBalancesDisplay();
 }
 
@@ -496,12 +600,8 @@ async function refreshDashboard() {
             renderHomeSummary();
             renderRecentTransactions();
             updateTransactionsTable();
-            if (document.getElementById('tab-stats').classList.contains('active')) {
-                renderStatsTab();
-            }
-            if (document.getElementById('tab-settings').classList.contains('active')) {
-                renderSettingsTab();
-            }
+            if (document.getElementById('tab-stats')?.classList.contains('active')) renderStatsTab();
+            if (document.getElementById('tab-settings')?.classList.contains('active')) renderSettingsTab();
         } catch (err) {
             console.error('[REFRESH] Erreur:', err);
         }
@@ -533,7 +633,7 @@ async function loadTransactions() {
     lastTransactionsLoad = { key: cacheKey, time: Date.now() };
 }
 
-// ==================== RENDER ACCUEIL ====================
+// ==================== RENDER (simplifié mais complet) ====================
 function renderAccountCards() {
     const container = document.getElementById('accountsCards');
     if (!container || !window.accountsMap) return;
@@ -603,7 +703,6 @@ function buildTxRow(t, compact = false) {
         </div>`;
 }
 
-// ==================== ONGLET TRANSACTIONS ====================
 function updateTransactionsTable() {
     const container = document.getElementById('transactionsTableBody');
     const paginationDiv = document.getElementById('transactionsPagination');
@@ -654,7 +753,7 @@ window.changePage = (delta) => {
     if (newPage >= 1 && newPage <= total) { window.currentPage = newPage; updateTransactionsTable(); }
 };
 
-// ==================== ONGLET STATS ====================
+// ==================== STATS ====================
 let balanceChartInstance = null;
 let expensesChartInstance = null;
 
@@ -790,7 +889,7 @@ async function generateInsights() {
     `;
 }
 
-// ==================== ONGLET PARAMÈTRES ====================
+// ==================== SETTINGS ====================
 function renderSettingsTab() {
     renderAccountsSettings();
     renderCategoriesSettings();
@@ -842,7 +941,7 @@ window.editAccountSettings = async (id) => {
     if (!acc) return;
     const newName = prompt('Nouveau nom :', acc.name);
     if (newName && newName !== acc.name) {
-        await executeRealAction({ action: 'update_account', old_name: acc.name, new_name: newName });
+        await db.from('accounts').update({ name: newName }).eq('id', id);
         await refreshDashboard();
         renderSettingsTab();
     }
@@ -962,7 +1061,7 @@ async function saveTransactionForm() {
         await executeRealAction({
             action: 'update_transaction',
             transaction_id: transId,
-            fields_to_update: { amount, description, date, account: account?.name, category: category?.name }
+            fields_to_update: { amount, description, date }
         });
     } else {
         await executeRealAction({
@@ -983,7 +1082,7 @@ window.deleteTransaction = async function(id) {
 
 window.editTransaction = function(id) { window.openTransactionModal('edit', id); };
 
-// ==================== SWITCH TAB & OVERRIDES ====================
+// ==================== SWITCH TAB ====================
 window.switchTab = function(tabName) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
