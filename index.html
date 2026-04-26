@@ -10,26 +10,22 @@
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<base target="_blank">
 </head>
 <body>
-
-<!-- ÉCRAN DE CONNEXION -->
 <div id="authScreen" class="auth-container">
     <div class="auth-card">
-        <h1>💰KAALISI</h1>
+        <h1>💰 KAALISI</h1>
         <p>Gérez vos dépenses par chat intelligent</p>
-        <input type="email" id="email" placeholder="Email" class="input" autocomplete="email">
-        <input type="password" id="password" placeholder="Mot de passe" class="input" autocomplete="current-password">
+        <input type="email" id="email" placeholder="Email" class="input">
+        <input type="password" id="password" placeholder="Mot de passe" class="input">
         <button id="loginBtn" class="btn btn-primary">Se connecter</button>
         <button id="registerBtn" class="btn btn-secondary">S'inscrire</button>
     </div>
 </div>
 
-<!-- TABLEAU DE BORD -->
 <div id="dashboardScreen" style="display: none;">
     <header>
-        <h1>💰KAALISI</h1>
+        <h1>💰 KAALISI</h1>
         <div class="user-info">
             <span id="userEmail"></span>
             <div class="balances" id="balances"></div>
@@ -37,7 +33,6 @@
         </div>
     </header>
 
-    <!-- Filtres période -->
     <div class="filters-bar">
         <div class="filter-group">
             <button class="filter-btn" data-period="week">📅 Cette semaine</button>
@@ -45,25 +40,22 @@
             <button class="filter-btn" data-period="year">📅 Cette année</button>
         </div>
         <div class="filter-group custom-range">
-            <input type="date" id="dateDebut">
-            <span>→</span>
-            <input type="date" id="dateFin">
+            <input type="date" id="dateDebut"> <span>→</span> <input type="date" id="dateFin">
             <button id="applyCustomBtn" class="btn-small">Appliquer</button>
         </div>
     </div>
 
-    <!-- Stats rapides -->
     <div class="stats-grid" id="statsContainer"></div>
 
-    <!-- Zone principale : Chat + Graphiques -->
     <div class="main-grid">
         <div class="chat-section">
             <div class="chat-messages" id="chatMessages">
-                <div class="system-msg">👋 Bonjour ! Demandez-moi : "sandwich 1000F cash", "épargne 5000F", "combien ce mois ?", "prévision", "meilleurs jours"...</div>
+                <div class="system-msg">👋 Bonjour ! Demandez-moi : "sandwich 1000F cash", "épargne 5000F", "combien ce mois ?", "prévision", "supprime toutes les dépenses restaurant"...</div>
             </div>
             <div class="chat-input">
                 <input type="text" id="userInput" placeholder="Ex: sandwich 1000F cash" autocomplete="off">
                 <button id="sendBtn">Envoyer</button>
+                <button id="cancelBtn" class="btn-cancel" style="display: none;">Annuler</button>
             </div>
         </div>
         <div class="charts-section">
@@ -75,61 +67,58 @@
         </div>
     </div>
 
-    <!-- Dernières transactions -->
+    <!-- Tableau moderne -->
     <div class="transactions-header">
-        <h2>📋 Dernières transactions</h2>
+        <h2>📋 Historique des transactions</h2>
         <div class="header-actions">
-            <button id="addTransactionBtn" class="btn-small">➕ Ajouter transaction</button>
+            <button id="addTransactionBtn" class="btn-small">➕ Ajouter</button>
             <button id="manageAccountsBtn" class="btn-small">🏦 Comptes</button>
             <button id="manageCategoriesBtn" class="btn-small">📂 Catégories</button>
         </div>
     </div>
-    <div class="transactions-list" id="transactionsList"></div>
 
-    <!-- Modal Ajouter/Modifier Transaction -->
+    <div class="filters-transactions">
+        <button class="filter-transaction-btn active" data-type="all" onclick="setFilterType('all')">📋 Toutes</button>
+        <button class="filter-transaction-btn" data-type="expense" onclick="setFilterType('expense')">💸 Dépenses</button>
+        <button class="filter-transaction-btn" data-type="income" onclick="setFilterType('income')">💰 Revenus</button>
+    </div>
+
+    <div class="table-container">
+        <table class="transactions-table">
+            <thead>
+                <tr>
+                    <th class="sortable" data-sort="date" onclick="setSort('date')">📅 Date</th>
+                    <th class="sortable" data-sort="category" onclick="setSort('category')">📂 Catégorie</th>
+                    <th class="sortable" data-sort="amount" onclick="setSort('amount')">💰 Montant</th>
+                    <th>🏦 Compte</th>
+                    <th>📝 Description</th>
+                    <th>⚙️ Actions</th>
+                </tr>
+            </thead>
+            <tbody id="transactionsTableBody">
+                <tr><td colspan="6">Chargement...</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div id="transactionsPagination" class="pagination-container"></div>
+
+    <!-- Modals -->
     <div id="transactionModal" class="modal">
         <div class="modal-content">
             <button class="close" onclick="closeModal('transactionModal')">&times;</button>
             <h3 id="transactionModalTitle">➕ Ajouter transaction</h3>
             <form id="transactionForm" onsubmit="event.preventDefault(); saveTransactionForm();">
-                <div class="form-row">
-                    <label>Montant (F)</label>
-                    <input type="number" id="transAmount" step="0.01" required placeholder="1000">
-                </div>
-                <div class="form-row">
-                    <label>Description</label>
-                    <input type="text" id="transDescription" placeholder="Ex: Sandwich du midi">
-                </div>
-                <div class="form-row">
-                    <label>Type</label>
-                    <select id="transType">
-                        <option value="expense">💸 Dépense</option>
-                        <option value="income">💰 Revenu</option>
-                        <option value="transfer">🔄 Transfert</option>
-                    </select>
-                </div>
-                <div class="form-row">
-                    <label>Date</label>
-                    <input type="date" id="transDate" required>
-                </div>
-                <div class="form-row">
-                    <label>Catégorie</label>
-                    <select id="transCategory">
-                        <option value="">-- Choisir --</option>
-                    </select>
-                </div>
-                <div class="form-row">
-                    <label>Compte</label>
-                    <select id="transAccount" required>
-                        <option value="">-- Choisir --</option>
-                    </select>
-                </div>
+                <div class="form-row"><label>Montant (F)</label><input type="number" id="transAmount" step="0.01" required placeholder="1000"></div>
+                <div class="form-row"><label>Description</label><input type="text" id="transDescription" placeholder="Ex: Sandwich du midi"></div>
+                <div class="form-row"><label>Type</label><select id="transType"><option value="expense">💸 Dépense</option><option value="income">💰 Revenu</option></select></div>
+                <div class="form-row"><label>Date</label><input type="date" id="transDate" required></div>
+                <div class="form-row"><label>Catégorie</label><select id="transCategory"><option value="">-- Choisir --</option></select></div>
+                <div class="form-row"><label>Compte</label><select id="transAccount" required><option value="">-- Choisir --</option></select></div>
                 <button type="submit" id="saveTransactionBtn" class="btn-primary" style="margin-top:8px;">💾 Enregistrer</button>
             </form>
         </div>
     </div>
 
-    <!-- Modal Gestion Comptes -->
     <div id="accountsModal" class="modal">
         <div class="modal-content">
             <button class="close" onclick="closeModal('accountsModal')">&times;</button>
@@ -143,7 +132,6 @@
         </div>
     </div>
 
-    <!-- Modal Gestion Catégories -->
     <div id="categoriesModal" class="modal">
         <div class="modal-content">
             <button class="close" onclick="closeModal('categoriesModal')">&times;</button>
@@ -157,7 +145,6 @@
         </div>
     </div>
 </div>
-
 <script src="app.js"></script>
 </body>
 </html>
