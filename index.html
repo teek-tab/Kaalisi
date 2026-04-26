@@ -8,7 +8,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Clash+Display:wght@400;500;600;700&family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="scroll_fix.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -45,7 +44,7 @@
     <!-- TOP BAR -->
     <div class="top-bar">
         <div class="top-bar-left">
-            <span class="app-logo"></span>
+            <span class="app-logo">💰</span>
             <span class="app-name">KAALISI</span>
         </div>
         <div class="top-bar-right">
@@ -283,6 +282,10 @@
         <button class="btn btn-primary" id="addCategoryBtn">Créer la catégorie</button>
     </div>
 </div>
+
+<!-- Éléments cachés pour compatibilité (utilisés par app.js) -->
+<div id="balances" style="display:none;"></div>
+<div id="statsContainer" style="display:none;"></div>
 
 <script src="app.js"></script>
 <script src="nav.js"></script>
