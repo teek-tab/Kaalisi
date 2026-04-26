@@ -19,7 +19,7 @@ let filterType = 'all';
 let sortColumn = 'date';
 let sortOrder = 'desc';
 
-// Historique local de la conversation (envoyé au backend)
+// Historique propre de la conversation (jamais corrompu)
 let conversationMessages = [];
 
 // DOM
@@ -57,8 +57,8 @@ async function checkAuth() {
         userEmailSpan.textContent = currentUser.email;
         await loadUserData();
         await loadPeriod('month');
-        resetConversation(); // initialise l'historique local
-        addChatMessage('system', '🟢 Connecté ! Parlez naturellement.', true);
+        resetConversation();
+        addChatMessage('system', '🟢 Connecté ! Parlez naturellement.');
     } else {
         authScreen.style.display = 'flex';
         dashboard.style.display = 'none';
@@ -66,23 +66,164 @@ async function checkAuth() {
 }
 
 // ==================== CONVERSATION ====================
-function addChatMessage(sender, text, isSystem = false) {
+
+// Affiche uniquement — ne touche JAMAIS à conversationMessages
+function addChatMessage(sender, text) {
     const div = document.createElement('div');
     div.className = sender === 'user' ? 'user-msg' : (sender === 'ai' ? 'ai-msg' : 'system-msg');
     div.textContent = text;
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
-    
-    if (!isSystem && (sender === 'user' || sender === 'ai')) {
-        const role = sender === 'user' ? 'user' : 'assistant';
-        conversationMessages.push({ role, content: text });
-    }
 }
 
 function resetConversation() {
     conversationMessages = [];
     chatMessages.innerHTML = '';
-    addChatMessage('system', '🔄 Nouvelle conversation. Prêt à vous aider.', true);
+    addChatMessage('system', '🔄 Nouvelle conversation. Prêt à vous aider.');
+}
+
+// Description lisible d'une action pour l'historique IA
+function getActionDescription(inst) {
+    switch (inst.action) {
+        case 'add_expense': return `Dépense ajoutée : ${inst.amount}F (${inst.category || 'Autres'}) sur ${inst.account}`;
+        case 'add_income': return `Revenu ajouté : ${inst.amount}F (${inst.category || 'Autres'}) sur ${inst.account}`;
+        case 'add_to_savings': return `${inst.amount}F transférés vers l'épargne depuis ${inst.source || 'cash'}`;
+        case 'delete_transaction': return `Transaction supprimée`;
+        case 'update_transaction': return `Transaction modifiée`;
+        case 'fetch_balance': return `Solde total consulté`;
+        case 'query': return `Analyse effectuée : ${inst.type || ''}`;
+        default: return inst.message || '';
+    }
+}
+
+async function sendMessage() {
+    const message = userInput.value.trim();
+    if (!message) return;
+
+    // 1. Afficher le message user
+    addChatMessage('user', message);
+    userInput.value = '';
+
+    // 2. Ajouter à l'historique propre AVANT l'appel
+    conversationMessages.push({ role: 'user', content: message });
+
+    // 3. Indicateur de chargement (jamais ajouté à l'historique)
+    const tempDiv = document.createElement('div');
+    tempDiv.className = 'ai-msg';
+    tempDiv.textContent = '⏳ ...';
+    chatMessages.appendChild(tempDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    try {
+        const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                userId: currentUser.id,
+                periode: currentPeriode,
+                history: [...conversationMessages] // historique complet incluant le dernier message user
+            })
+        });
+
+        const result = await res.json();
+        tempDiv.remove();
+
+        let aiText = '';
+
+        if (result.action && result.action !== 'answer' && result.action !== 'clarify') {
+            // Action financière : exécuter puis construire le texte pour l'historique
+            await executeInstruction(result);
+            aiText = result.message || getActionDescription(result);
+            await refreshDashboard();
+        } else {
+            // Réponse conversationnelle
+            aiText = result.message || '';
+            addChatMessage('ai', aiText);
+        }
+
+        // 4. Ajouter la réponse IA à l'historique APRÈS traitement
+        if (aiText) {
+            conversationMessages.push({ role: 'assistant', content: aiText });
+        }
+
+    } catch (err) {
+        tempDiv.remove();
+        addChatMessage('ai', '❌ Erreur de connexion.');
+        // Retirer le dernier message user de l'historique si erreur réseau
+        conversationMessages.pop();
+        console.error(err);
+    }
+}
+
+async function executeInstruction(inst) {
+    try {
+        switch (inst.action) {
+            case 'add_expense':
+            case 'add_income':
+                await handleAddTransaction(inst);
+                break;
+            case 'add_to_savings':
+                await handleAddToSavings(inst);
+                break;
+            case 'delete_transaction':
+                await handleDeleteTransaction(inst);
+                break;
+            case 'update_transaction':
+                await handleUpdateTransaction(inst);
+                break;
+            case 'add_account':
+                await handleAddAccount(inst);
+                break;
+            case 'update_account':
+                await handleUpdateAccount(inst);
+                break;
+            case 'fetch_balance': {
+                let total = 0;
+                for (let acc of accountsMap.values()) total += acc.balance;
+                addChatMessage('ai', `💰 Solde total : ${total} F`);
+                break;
+            }
+            case 'query':
+                if (inst.type === 'total') {
+                    const tot = transactionsData.reduce((s, t) => t.type === 'expense' ? s + t.amount : s, 0);
+                    addChatMessage('ai', `📊 Total dépenses : ${tot} F`);
+                } else if (inst.type === 'forecast') {
+                    const today = new Date();
+                    const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+                    const daysPassed = today.getDate();
+                    const spent = transactionsData.reduce((s, t) => t.type === 'expense' ? s + t.amount : s, 0);
+                    const avg = spent / (daysPassed || 1);
+                    const forecast = avg * (daysInMonth - daysPassed);
+                    addChatMessage('ai', `📈 Prévision fin de mois : ~${Math.round(forecast)} F supplémentaires`);
+                } else if (inst.type === 'best_days') {
+                    const dayMap = new Map();
+                    transactionsData.forEach(t => {
+                        if (t.type === 'expense') {
+                            const d = new Date(t.date).getDay();
+                            dayMap.set(d, (dayMap.get(d) || 0) + t.amount);
+                        }
+                    });
+                    let best = null, min = Infinity;
+                    for (let [d, v] of dayMap) if (v < min) { min = v; best = d; }
+                    const days = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+                    addChatMessage('ai', best !== null ? `🔥 Moins de dépenses le ${days[best]} (${min}F)` : "Pas assez de données");
+                } else {
+                    addChatMessage('ai', inst.message || 'Analyse effectuée.');
+                }
+                break;
+            case 'clarify':
+                addChatMessage('ai', inst.message || 'Pouvez-vous préciser ?');
+                break;
+            case 'answer':
+                addChatMessage('ai', inst.message || '');
+                break;
+            default:
+                addChatMessage('ai', inst.message || "Je n'ai pas compris.");
+        }
+    } catch (e) {
+        console.error(e);
+        addChatMessage('ai', '❌ Erreur lors de l\'exécution.');
+    }
 }
 
 // ==================== DONNÉES ====================
@@ -95,23 +236,23 @@ async function loadUserData() {
 function updateBalancesDisplay() {
     balancesDiv.innerHTML = Array.from(accountsMap.values()).map(a => `<span>${getEmoji(a.name)} ${a.name}: ${a.balance} F</span>`).join('');
 }
-function getEmoji(name) { return {cash:'💵', wave:'📱', epargne:'💰'}[name] || '🏦'; }
+function getEmoji(name) { return { cash: '💵', wave: '📱', epargne: '💰' }[name] || '🏦'; }
 
 // ==================== PÉRIODE ====================
 function getDateRange(period) {
     const now = new Date();
     if (period === 'week') {
         const s = new Date(now); s.setDate(now.getDate() - now.getDay());
-        return { debut: s.toISOString().slice(0,10), fin: now.toISOString().slice(0,10) };
+        return { debut: s.toISOString().slice(0, 10), fin: now.toISOString().slice(0, 10) };
     } else if (period === 'month') {
         return {
-            debut: new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10),
-            fin: new Date(now.getFullYear(), now.getMonth()+1, 0).toISOString().slice(0,10)
+            debut: new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10),
+            fin: new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10)
         };
     } else {
         return {
-            debut: new Date(now.getFullYear(), 0, 1).toISOString().slice(0,10),
-            fin: new Date(now.getFullYear(), 11, 31).toISOString().slice(0,10)
+            debut: new Date(now.getFullYear(), 0, 1).toISOString().slice(0, 10),
+            fin: new Date(now.getFullYear(), 11, 31).toISOString().slice(0, 10)
         };
     }
 }
@@ -147,146 +288,46 @@ async function loadTransactions() {
 // ==================== STATS & CHART ====================
 function updateStats() {
     let total = 0, income = 0;
-    transactionsData.forEach(t => { if (t.type==='expense') total+=t.amount; if (t.type==='income') income+=t.amount; });
-    const nbJ = Math.max(1, Math.ceil((new Date(currentPeriode.fin)-new Date(currentPeriode.debut))/(1000*3600*24)));
+    transactionsData.forEach(t => { if (t.type === 'expense') total += t.amount; if (t.type === 'income') income += t.amount; });
+    const nbJ = Math.max(1, Math.ceil((new Date(currentPeriode.fin) - new Date(currentPeriode.debut)) / (1000 * 3600 * 24)));
     statsContainer.innerHTML = `
         <div class="stat-card"><h3>💸 Dépenses</h3><div class="stat-number">${total.toFixed(0)} F</div></div>
         <div class="stat-card"><h3>📈 Revenus</h3><div class="stat-number">${income.toFixed(0)} F</div></div>
-        <div class="stat-card"><h3>📊 Moy/jour</h3><div class="stat-number">${(total/nbJ).toFixed(0)} F</div></div>
+        <div class="stat-card"><h3>📊 Moy/jour</h3><div class="stat-number">${(total / nbJ).toFixed(0)} F</div></div>
         <div class="stat-card"><h3>📅 Transactions</h3><div class="stat-number">${transactionsData.length}</div></div>
     `;
 }
 function updateChart() {
     const ctx = document.getElementById('expensesChart').getContext('2d');
     const totals = new Map();
-    transactionsData.forEach(t => { if (t.type==='expense') { const n=t.categories?.name||'Autres'; totals.set(n,(totals.get(n)||0)+t.amount); } });
+    transactionsData.forEach(t => { if (t.type === 'expense') { const n = t.categories?.name || 'Autres'; totals.set(n, (totals.get(n) || 0) + t.amount); } });
     if (expensesChart) expensesChart.destroy();
     if (!totals.size) return;
     expensesChart = new Chart(ctx, {
         type: 'doughnut',
-        data: { labels: [...totals.keys()], datasets: [{ data: [...totals.values()], backgroundColor: ['#3b82f6','#f97316','#10b981','#ef4444','#8b5cf6'] }] }
+        data: { labels: [...totals.keys()], datasets: [{ data: [...totals.values()], backgroundColor: ['#3b82f6', '#f97316', '#10b981', '#ef4444', '#8b5cf6'] }] }
     });
 }
 async function generateInsights() {
-    const total = transactionsData.reduce((s,t)=>t.type==='expense'?s+t.amount:s,0);
-    const nbJ = Math.max(1,Math.ceil((new Date(currentPeriode.fin)-new Date(currentPeriode.debut))/(1000*3600*24)));
-    const moy = total/nbJ;
+    const total = transactionsData.reduce((s, t) => t.type === 'expense' ? s + t.amount : s, 0);
+    const nbJ = Math.max(1, Math.ceil((new Date(currentPeriode.fin) - new Date(currentPeriode.debut)) / (1000 * 3600 * 24)));
+    const moy = total / nbJ;
     document.getElementById('insightsContent').innerHTML = `
         <p>📉 Moy/jour : <strong>${moy.toFixed(0)} F</strong></p>
-        <p>💡 ${moy>5000 ? 'Dépenses élevées' : 'Bon contrôle'}</p>`;
-}
-
-// ==================== CHAT IA ====================
-async function sendMessage() {
-    const message = userInput.value.trim();
-    if (!message) return;
-    addChatMessage('user', message);
-    userInput.value = '';
-
-    // Message temporaire "en réflexion"
-    const tempId = Date.now();
-    const tempDiv = document.createElement('div');
-    tempDiv.className = 'ai-msg';
-    tempDiv.textContent = '⏳ ...';
-    chatMessages.appendChild(tempDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-    // On ajoute un message factice à l'historique local (pour le contexte), mais on le retirera après
-    conversationMessages.push({ role: 'assistant', content: '⏳ ...' });
-
-    try {
-        const res = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message,
-                userId: currentUser.id,
-                periode: currentPeriode,
-                history: conversationMessages.slice(0, -1) // tout sauf le message temporaire
-            })
-        });
-        const result = await res.json();
-
-        // Supprimer le message temporaire
-        tempDiv.remove();
-        conversationMessages.pop(); // enlever le message temporaire
-
-        // Exécuter l'action ou afficher la réponse
-        if (result.action) {
-            await executeInstruction(result);
-        } else {
-            // Simple réponse texte
-            addChatMessage('ai', result.message || 'Action exécutée.', false);
-        }
-        await refreshDashboard();
-    } catch (err) {
-        tempDiv.remove();
-        conversationMessages.pop();
-        addChatMessage('ai', '❌ Erreur de connexion.', false);
-        console.error(err);
-    }
-}
-
-async function executeInstruction(inst) {
-    try {
-        switch(inst.action) {
-            case 'add_expense': case 'add_income': await handleAddTransaction(inst); break;
-            case 'add_to_savings': await handleAddToSavings(inst); break;
-            case 'delete_transaction': await handleDeleteTransaction(inst); break;
-            case 'update_transaction': await handleUpdateTransaction(inst); break;
-            case 'add_account': await handleAddAccount(inst); break;
-            case 'update_account': await handleUpdateAccount(inst); break;
-            case 'fetch_balance':
-                let total = 0;
-                for (let acc of accountsMap.values()) total += acc.balance;
-                addChatMessage('ai', `💰 Solde total : ${total} F`, false);
-                break;
-            case 'query':
-                if (inst.type === 'total') {
-                    const tot = transactionsData.reduce((s,t)=>t.type==='expense'?s+t.amount:s,0);
-                    addChatMessage('ai', `📊 Total dépenses : ${tot} F`, false);
-                } else if (inst.type === 'forecast') {
-                    // calcul simple
-                    const today = new Date();
-                    const daysInMonth = new Date(today.getFullYear(), today.getMonth()+1, 0).getDate();
-                    const daysPassed = today.getDate();
-                    const spent = transactionsData.reduce((s,t)=>t.type==='expense'?s+t.amount:s,0);
-                    const avg = spent / (daysPassed||1);
-                    const forecast = avg * (daysInMonth - daysPassed);
-                    addChatMessage('ai', `📈 Prévision fin de mois : ~${Math.round(forecast)} F`, false);
-                } else if (inst.type === 'best_days') {
-                    const dayMap = new Map();
-                    transactionsData.forEach(t => { if(t.type==='expense') { const d = new Date(t.date).getDay(); dayMap.set(d, (dayMap.get(d)||0)+t.amount); } });
-                    let best = null, min = Infinity;
-                    for (let [d,v] of dayMap) if(v<min) { min=v; best=d; }
-                    const days = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
-                    addChatMessage('ai', best!==null ? `🔥 Moins de dépenses le ${days[best]} (${min}F)` : "Pas assez de données", false);
-                } else {
-                    addChatMessage('ai', inst.message || 'Analyse effectuée.', false);
-                }
-                break;
-            case 'clarify':
-                addChatMessage('ai', inst.message || 'Précisez.', false);
-                break;
-            case 'answer':
-                addChatMessage('ai', inst.message || '', false);
-                break;
-            default:
-                addChatMessage('ai', "Je n'ai pas compris.", false);
-        }
-    } catch(e) { console.error(e); addChatMessage('ai','❌ Erreur exécution.', false); }
+        <p>💡 ${moy > 5000 ? 'Dépenses élevées' : 'Bon contrôle'}</p>`;
 }
 
 // ==================== TRANSACTIONS ====================
 async function handleAddTransaction(inst) {
     let catId = null;
-    for (let [id,cat] of categoriesMap) if (cat.name.toLowerCase() === (inst.category||'').toLowerCase()) { catId=id; break; }
+    for (let [id, cat] of categoriesMap) if (cat.name.toLowerCase() === (inst.category || '').toLowerCase()) { catId = id; break; }
     if (!catId && inst.category) {
         const { data } = await db.from('categories').insert({ user_id: currentUser.id, name: inst.category, icon: '📌' }).select();
         if (data?.[0]) { catId = data[0].id; categoriesMap.set(catId, data[0]); }
     }
     let accId = null;
-    for (let [id,acc] of accountsMap) if (acc.name === inst.account) { accId=id; break; }
-    if (!accId) { addChatMessage('ai', `❌ Compte "${inst.account}" introuvable.`, false); return; }
+    for (let [id, acc] of accountsMap) if (acc.name === inst.account) { accId = id; break; }
+    if (!accId) { addChatMessage('ai', `❌ Compte "${inst.account}" introuvable.`); return; }
 
     const isIncome = inst.action === 'add_income';
     const { data, error } = await db.from('transactions').insert({
@@ -296,7 +337,7 @@ async function handleAddTransaction(inst) {
         category_id: catId,
         account_id: accId,
         type: isIncome ? 'income' : 'expense',
-        date: inst.date || new Date().toISOString().slice(0,10)
+        date: inst.date || new Date().toISOString().slice(0, 10)
     }).select();
     if (!error && data?.[0]) {
         lastCreatedTransactionId = data[0].id;
@@ -305,31 +346,31 @@ async function handleAddTransaction(inst) {
         await db.from('accounts').update({ balance: newBalance }).eq('id', accId);
         acc.balance = newBalance;
         updateBalancesDisplay();
-        addChatMessage('ai', `${isIncome ? '💰 Revenu' : '💸 Dépense'} ajouté : ${inst.amount} F (${inst.category||'Autres'}) sur ${inst.account}`, false);
-    } else { addChatMessage('ai', '❌ Erreur ajout.', false); }
+        addChatMessage('ai', `${isIncome ? '💰 Revenu' : '💸 Dépense'} ajouté : ${inst.amount} F (${inst.category || 'Autres'}) sur ${inst.account}`);
+    } else { addChatMessage('ai', '❌ Erreur ajout.'); }
 }
 
 async function handleAddToSavings(inst) {
     const src = inst.source || 'cash';
-    let srcId=null, epId=null;
-    for (let [id,a] of accountsMap) { if(a.name===src) srcId=id; if(a.name==='epargne') epId=id; }
-    if (!srcId || !epId) { addChatMessage('ai', '❌ Compte introuvable.', false); return; }
+    let srcId = null, epId = null;
+    for (let [id, a] of accountsMap) { if (a.name === src) srcId = id; if (a.name === 'epargne') epId = id; }
+    if (!srcId || !epId) { addChatMessage('ai', '❌ Compte introuvable.'); return; }
     const srcAcc = accountsMap.get(srcId);
     const epAcc = accountsMap.get(epId);
-    if (srcAcc.balance < inst.amount) { addChatMessage('ai', `❌ Solde ${src} insuffisant`, false); return; }
+    if (srcAcc.balance < inst.amount) { addChatMessage('ai', `❌ Solde ${src} insuffisant`); return; }
     await db.from('accounts').update({ balance: srcAcc.balance - inst.amount }).eq('id', srcId);
     await db.from('accounts').update({ balance: epAcc.balance + inst.amount }).eq('id', epId);
     srcAcc.balance -= inst.amount;
     epAcc.balance += inst.amount;
     updateBalancesDisplay();
-    addChatMessage('ai', `💰 ${inst.amount}F transférés de ${src} vers épargne`, false);
+    addChatMessage('ai', `💰 ${inst.amount}F transférés de ${src} vers épargne`);
 }
 
 async function handleDeleteTransaction(inst) {
     const transId = inst.transaction_id || lastCreatedTransactionId;
-    if (!transId) { addChatMessage('ai', '❌ Aucune transaction à supprimer.', false); return; }
-    const { data:t } = await db.from('transactions').select('*').eq('id', transId).eq('user_id', currentUser.id).single();
-    if (!t) { addChatMessage('ai', '❌ Transaction introuvable.', false); return; }
+    if (!transId) { addChatMessage('ai', '❌ Aucune transaction à supprimer.'); return; }
+    const { data: t } = await db.from('transactions').select('*').eq('id', transId).eq('user_id', currentUser.id).single();
+    if (!t) { addChatMessage('ai', '❌ Transaction introuvable.'); return; }
     const acc = accountsMap.get(t.account_id);
     if (acc) {
         const newBal = t.type === 'income' ? acc.balance - t.amount : acc.balance + t.amount;
@@ -338,15 +379,14 @@ async function handleDeleteTransaction(inst) {
         updateBalancesDisplay();
     }
     await db.from('transactions').delete().eq('id', transId).eq('user_id', currentUser.id);
-    addChatMessage('ai', `🗑️ Transaction supprimée (${t.amount}F)`, false);
+    addChatMessage('ai', `🗑️ Transaction supprimée (${t.amount}F)`);
 }
 
 async function handleUpdateTransaction(inst) {
     const transId = inst.transaction_id || lastCreatedTransactionId;
-    if (!transId) { addChatMessage('ai', '❌ Aucune transaction à modifier.', false); return; }
-    const { data:t } = await db.from('transactions').select('*').eq('id', transId).eq('user_id', currentUser.id).single();
-    if (!t) { addChatMessage('ai', '❌ Transaction introuvable.', false); return; }
-    // Rétablir l'ancien solde
+    if (!transId) { addChatMessage('ai', '❌ Aucune transaction à modifier.'); return; }
+    const { data: t } = await db.from('transactions').select('*').eq('id', transId).eq('user_id', currentUser.id).single();
+    if (!t) { addChatMessage('ai', '❌ Transaction introuvable.'); return; }
     const oldAcc = accountsMap.get(t.account_id);
     if (oldAcc) {
         const oldBal = t.type === 'income' ? oldAcc.balance - t.amount : oldAcc.balance + t.amount;
@@ -360,12 +400,12 @@ async function handleUpdateTransaction(inst) {
     if (fields.date !== undefined) updates.date = fields.date;
     let newAccId = t.account_id;
     if (fields.account) {
-        for (let [id,a] of accountsMap) if (a.name === fields.account) { newAccId = id; break; }
+        for (let [id, a] of accountsMap) if (a.name === fields.account) { newAccId = id; break; }
         updates.account_id = newAccId;
     }
     if (fields.category) {
         let catId = null;
-        for (let [id,c] of categoriesMap) if (c.name.toLowerCase() === fields.category.toLowerCase()) { catId = id; break; }
+        for (let [id, c] of categoriesMap) if (c.name.toLowerCase() === fields.category.toLowerCase()) { catId = id; break; }
         if (!catId) {
             const { data } = await db.from('categories').insert({ user_id: currentUser.id, name: fields.category, icon: '📌' }).select();
             if (data?.[0]) { catId = data[0].id; categoriesMap.set(catId, data[0]); }
@@ -373,30 +413,28 @@ async function handleUpdateTransaction(inst) {
         if (catId) updates.category_id = catId;
     }
     await db.from('transactions').update(updates).eq('id', transId);
-    // Appliquer nouveau solde
     const newAcc = accountsMap.get(newAccId);
     const newAmount = updates.amount !== undefined ? updates.amount : t.amount;
-    const newType = t.type; // le type ne change pas dans cette version simplifiée
     if (newAcc) {
-        const delta = newType === 'income' ? newAmount : -newAmount;
+        const delta = t.type === 'income' ? newAmount : -newAmount;
         await db.from('accounts').update({ balance: newAcc.balance + delta }).eq('id', newAccId);
         newAcc.balance += delta;
     }
     updateBalancesDisplay();
-    addChatMessage('ai', '✏️ Transaction modifiée.', false);
+    addChatMessage('ai', '✏️ Transaction modifiée.');
 }
 
 async function handleAddAccount(inst) {
-    const name = (inst.new_name || '').toLowerCase().replace(/\s+/g,'_');
-    if(!name) return;
+    const name = (inst.new_name || '').toLowerCase().replace(/\s+/g, '_');
+    if (!name) return;
     const { data, error } = await db.from('accounts').insert({ user_id: currentUser.id, name, balance: inst.balance || 0 }).select();
-    if (!error && data?.[0]) { accountsMap.set(data[0].id, data[0]); updateBalancesDisplay(); addChatMessage('ai', `🏦 Compte "${name}" créé.`, false); }
+    if (!error && data?.[0]) { accountsMap.set(data[0].id, data[0]); updateBalancesDisplay(); addChatMessage('ai', `🏦 Compte "${name}" créé.`); }
 }
 async function handleUpdateAccount(inst) {
     let accId = null;
-    for (let [id,a] of accountsMap) if (a.name === inst.old_name) { accId = id; break; }
+    for (let [id, a] of accountsMap) if (a.name === inst.old_name) { accId = id; break; }
     if (!accId) return;
-    const newName = (inst.new_name || '').toLowerCase().replace(/\s+/g,'_');
+    const newName = (inst.new_name || '').toLowerCase().replace(/\s+/g, '_');
     const upd = { name: newName };
     if (inst.balance !== undefined) upd.balance = inst.balance;
     await db.from('accounts').update(upd).eq('id', accId);
@@ -404,7 +442,7 @@ async function handleUpdateAccount(inst) {
     acc.name = newName;
     if (inst.balance !== undefined) acc.balance = inst.balance;
     updateBalancesDisplay();
-    addChatMessage('ai', `🏦 Compte renommé : "${inst.old_name}" → "${newName}".`, false);
+    addChatMessage('ai', `🏦 Compte renommé : "${inst.old_name}" → "${newName}".`);
 }
 
 // ==================== TABLEAU PAGINÉ ====================
@@ -415,11 +453,11 @@ function updateTransactionsTable() {
     let filtered = [...transactionsData];
     if (filterType === 'expense') filtered = filtered.filter(t => t.type === 'expense');
     else if (filterType === 'income') filtered = filtered.filter(t => t.type === 'income');
-    filtered.sort((a,b) => {
+    filtered.sort((a, b) => {
         let valA, valB;
         if (sortColumn === 'date') { valA = new Date(a.date); valB = new Date(b.date); }
         else if (sortColumn === 'amount') { valA = a.amount; valB = b.amount; }
-        else if (sortColumn === 'category') { valA = (a.categories?.name||'').toLowerCase(); valB = (b.categories?.name||'').toLowerCase(); }
+        else if (sortColumn === 'category') { valA = (a.categories?.name || '').toLowerCase(); valB = (b.categories?.name || '').toLowerCase(); }
         else return 0;
         if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
         if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
@@ -427,8 +465,8 @@ function updateTransactionsTable() {
     });
     const totalPages = Math.ceil(filtered.length / rowsPerPage) || 1;
     if (currentPage > totalPages) currentPage = 1;
-    const start = (currentPage-1)*rowsPerPage;
-    const pageRows = filtered.slice(start, start+rowsPerPage);
+    const start = (currentPage - 1) * rowsPerPage;
+    const pageRows = filtered.slice(start, start + rowsPerPage);
     tbody.innerHTML = pageRows.map(t => {
         const cat = t.categories || { name: 'Autres', icon: '📦' };
         const acc = t.accounts || { name: 'cash' };
@@ -449,18 +487,18 @@ function updateTransactionsTable() {
     paginationDiv.innerHTML = `
         <div>${filtered.length} transaction(s) - Page ${currentPage}/${totalPages}</div>
         <div>
-            <button class="btn-small" onclick="changePage(-1)" ${currentPage===1 ? 'disabled' : ''}>◀ Précédent</button>
-            <button class="btn-small" onclick="changePage(1)" ${currentPage===totalPages ? 'disabled' : ''}>Suivant ▶</button>
+            <button class="btn-small" onclick="changePage(-1)" ${currentPage === 1 ? 'disabled' : ''}>◀ Précédent</button>
+            <button class="btn-small" onclick="changePage(1)" ${currentPage === totalPages ? 'disabled' : ''}>Suivant ▶</button>
         </div>
     `;
 }
 window.changePage = (delta) => {
     let count = transactionsData.length;
-    if (filterType === 'expense') count = transactionsData.filter(t=>t.type==='expense').length;
-    else if (filterType === 'income') count = transactionsData.filter(t=>t.type==='income').length;
-    const total = Math.ceil(count/rowsPerPage);
+    if (filterType === 'expense') count = transactionsData.filter(t => t.type === 'expense').length;
+    else if (filterType === 'income') count = transactionsData.filter(t => t.type === 'income').length;
+    const total = Math.ceil(count / rowsPerPage);
     const newPage = currentPage + delta;
-    if (newPage>=1 && newPage<=total) { currentPage = newPage; updateTransactionsTable(); }
+    if (newPage >= 1 && newPage <= total) { currentPage = newPage; updateTransactionsTable(); }
 };
 function setFilterType(type) { filterType = type; currentPage = 1; updateTransactionsTable(); }
 function setSort(col) {
@@ -471,18 +509,18 @@ function setSort(col) {
 }
 
 // ==================== MODALS ====================
-function openTransactionModal(mode='add', id=null) {
+function openTransactionModal(mode = 'add', id = null) {
     const modal = document.getElementById('transactionModal');
-    document.getElementById('transactionModalTitle').innerText = mode==='edit' ? '✏️ Modifier' : '➕ Ajouter';
+    document.getElementById('transactionModalTitle').innerText = mode === 'edit' ? '✏️ Modifier' : '➕ Ajouter';
     const form = document.getElementById('transactionForm');
     form.dataset.mode = mode;
     form.dataset.transactionId = id || '';
     const catSel = document.getElementById('transCategory');
     const accSel = document.getElementById('transAccount');
-    catSel.innerHTML = '<option value="">-- Choisir --</option>' + Array.from(categoriesMap.values()).map(c=>`<option value="${c.id}">${c.icon} ${c.name}</option>`);
-    accSel.innerHTML = '<option value="">-- Choisir --</option>' + Array.from(accountsMap.values()).map(a=>`<option value="${a.id}">${getEmoji(a.name)} ${a.name}</option>`);
-    if (mode==='edit' && id) {
-        const t = transactionsData.find(x=>x.id===id);
+    catSel.innerHTML = '<option value="">-- Choisir --</option>' + Array.from(categoriesMap.values()).map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`);
+    accSel.innerHTML = '<option value="">-- Choisir --</option>' + Array.from(accountsMap.values()).map(a => `<option value="${a.id}">${getEmoji(a.name)} ${a.name}</option>`);
+    if (mode === 'edit' && id) {
+        const t = transactionsData.find(x => x.id === id);
         if (t) {
             document.getElementById('transAmount').value = t.amount;
             document.getElementById('transDescription').value = t.description || '';
@@ -493,7 +531,7 @@ function openTransactionModal(mode='add', id=null) {
         }
     } else {
         document.getElementById('transactionForm').reset();
-        document.getElementById('transDate').value = new Date().toISOString().slice(0,10);
+        document.getElementById('transDate').value = new Date().toISOString().slice(0, 10);
     }
     modal.style.display = 'flex';
 }
@@ -531,7 +569,10 @@ async function saveTransactionForm() {
     await refreshDashboard();
 }
 window.editTransaction = (id) => openTransactionModal('edit', id);
-window.deleteTransaction = async (id) => { if(confirm('Supprimer ?')) await executeInstruction({ action: 'delete_transaction', transaction_id: id }); await refreshDashboard(); };
+window.deleteTransaction = async (id) => {
+    if (confirm('Supprimer ?')) await executeInstruction({ action: 'delete_transaction', transaction_id: id });
+    await refreshDashboard();
+};
 function openAccountsModal() {
     const modal = document.getElementById('accountsModal');
     const listDiv = document.getElementById('accountsList');
@@ -545,7 +586,7 @@ function openAccountsModal() {
     modal.style.display = 'flex';
 }
 async function addAccountManual() {
-    const name = document.getElementById('newAccountName').value.trim().toLowerCase().replace(/\s+/g,'_');
+    const name = document.getElementById('newAccountName').value.trim().toLowerCase().replace(/\s+/g, '_');
     const balance = parseFloat(document.getElementById('newAccountBalance').value) || 0;
     if (!name) return;
     await executeInstruction({ action: 'add_account', new_name: name, balance });
