@@ -31,7 +31,10 @@ const authScreen = document.getElementById('authScreen');
 const dashboard = document.getElementById('dashboardScreen');
 const chatMessages = document.getElementById('chatMessages');
 const userInput = document.getElementById('userInput');
-let expensesChart = null;
+
+// Variables globales pour Chart (utilisées par nav.js)
+window.balanceChartInstance = null;
+window.expensesChartInstance = null;
 
 // ==================== AUTH ====================
 async function login() {
@@ -270,9 +273,8 @@ async function handleConfirmationResponse(response) {
     }
 }
 
-// ==================== EXÉCUTION DB (avec toutes les actions) ====================
+// ==================== EXÉCUTION DB ====================
 async function executeRealAction(action) {
-    // Actions multiples
     if (Array.isArray(action)) {
         for (const singleAction of action) {
             await executeRealAction(singleAction);
@@ -400,7 +402,6 @@ async function handleDeleteQuery(action) {
         throw new Error('Aucune transaction trouvée');
     }
     
-    // Restaurer les soldes
     for (const t of transactions) {
         const acc = accountsMap.get(t.account_id);
         if (acc) {
@@ -413,7 +414,6 @@ async function handleDeleteQuery(action) {
         }
     }
     
-    // Supprimer
     let deleteQuery = db.from('transactions').delete().eq('user_id', currentUser.id);
     if (filter.date) deleteQuery = deleteQuery.eq('date', filter.date);
     if (filter.type) deleteQuery = deleteQuery.eq('type', filter.type);
@@ -490,7 +490,6 @@ async function handleUpdateQuery(action) {
         throw new Error('Aucune transaction trouvée');
     }
     
-    // Appliquer la mise à jour
     if (update.category) {
         let newCatId = null;
         for (let [id, cat] of categoriesMap) {
@@ -633,7 +632,7 @@ async function loadTransactions() {
     lastTransactionsLoad = { key: cacheKey, time: Date.now() };
 }
 
-// ==================== RENDER (simplifié mais complet) ====================
+// ==================== RENDER ACCUEIL ====================
 function renderAccountCards() {
     const container = document.getElementById('accountsCards');
     if (!container || !window.accountsMap) return;
@@ -659,14 +658,17 @@ function renderHomeSummary() {
     const nbJ = Math.max(1, Math.ceil((new Date(currentPeriode.fin) - new Date(currentPeriode.debut)) / 86400000));
     const avg = expense / nbJ;
     
-    setEl('homeExpense', expense);
-    setEl('homeIncome', income);
+    const homeExpense = document.getElementById('homeExpense');
+    const homeIncome = document.getElementById('homeIncome');
+    if (homeExpense) homeExpense.textContent = fmt(expense) + ' F';
+    if (homeIncome) homeIncome.textContent = fmt(income) + ' F';
     const netEl = document.getElementById('homeNet');
     if (netEl) {
         netEl.textContent = (net >= 0 ? '+' : '') + fmt(net);
         netEl.style.color = net >= 0 ? 'var(--green)' : 'var(--red)';
     }
-    setEl('homeAvg', avg);
+    const homeAvg = document.getElementById('homeAvg');
+    if (homeAvg) homeAvg.textContent = fmt(avg) + ' F';
 }
 
 function renderRecentTransactions() {
@@ -703,6 +705,7 @@ function buildTxRow(t, compact = false) {
         </div>`;
 }
 
+// ==================== ONGLET TRANSACTIONS ====================
 function updateTransactionsTable() {
     const container = document.getElementById('transactionsTableBody');
     const paginationDiv = document.getElementById('transactionsPagination');
@@ -753,10 +756,7 @@ window.changePage = (delta) => {
     if (newPage >= 1 && newPage <= total) { window.currentPage = newPage; updateTransactionsTable(); }
 };
 
-// ==================== STATS ====================
-let balanceChartInstance = null;
-let expensesChartInstance = null;
-
+// ==================== ONGLET STATS ====================
 function renderStatsTab() {
     renderStatsKPIs();
     renderDonutChart();
@@ -791,9 +791,9 @@ function renderDonutChart() {
             totals.set(n, (totals.get(n) || 0) + t.amount);
         }
     });
-    if (expensesChartInstance) expensesChartInstance.destroy();
+    if (window.expensesChartInstance) window.expensesChartInstance.destroy();
     if (!totals.size) return;
-    expensesChartInstance = new Chart(ctx, {
+    window.expensesChartInstance = new Chart(ctx, {
         type: 'doughnut',
         data: {
             labels: [...totals.keys()],
@@ -817,8 +817,8 @@ function renderBalanceCurve() {
     const dates = [...byDate.keys()].sort();
     let running = 0;
     const values = dates.map(d => { running += byDate.get(d); return running; });
-    if (balanceChartInstance) balanceChartInstance.destroy();
-    balanceChartInstance = new Chart(ctx, {
+    if (window.balanceChartInstance) window.balanceChartInstance.destroy();
+    window.balanceChartInstance = new Chart(ctx, {
         type: 'line',
         data: {
             labels: dates.map(d => d.slice(5)),
@@ -889,7 +889,7 @@ async function generateInsights() {
     `;
 }
 
-// ==================== SETTINGS ====================
+// ==================== ONGLET PARAMÈTRES ====================
 function renderSettingsTab() {
     renderAccountsSettings();
     renderCategoriesSettings();
@@ -967,7 +967,6 @@ window.deleteCategorySettings = async (id) => {
 
 // ==================== HELPERS ====================
 function fmt(n) { return Math.round(n).toLocaleString('fr'); }
-function setEl(id, val) { const el = document.getElementById(id); if (el) el.textContent = fmt(val) + ' F'; }
 
 function openModal(id) { const m = document.getElementById(id); if (m) m.classList.add('open'); }
 window.closeModal = function(id) { const m = document.getElementById(id); if (m) m.classList.remove('open'); };
@@ -1000,7 +999,7 @@ function exportCSV() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `kaalisi_export_${new Date().toISOString().slice(0,10)}.csv`;
+    link.download = `xaalis_export_${new Date().toISOString().slice(0,10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
 }
