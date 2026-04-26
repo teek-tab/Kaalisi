@@ -1,23 +1,37 @@
+// ==================== THÈME CLAIR/SOMBRE ====================
+const themeToggle = document.getElementById('themeToggle');
+
+if (themeToggle) {
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    themeToggle.textContent = savedTheme === 'dark' ? '🌙' : '☀️';
+    
+    themeToggle.addEventListener('click', () => {
+        const current = document.documentElement.getAttribute('data-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('theme', next);
+        themeToggle.textContent = next === 'dark' ? '🌙' : '☀️';
+    });
+}
+
 // ==================== NAVIGATION ONGLETS ====================
 
 function switchTab(tabName) {
-    // Masquer tous les onglets
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
 
-    // Activer l'onglet cible
     const tabEl = document.getElementById('tab-' + tabName);
     const navBtn = document.querySelector(`.nav-btn[data-tab="${tabName}"]`);
     if (tabEl) tabEl.classList.add('active');
     if (navBtn) navBtn.classList.add('active');
 
-    // Actions spécifiques à chaque onglet
     if (tabName === 'stats') renderStatsTab();
     if (tabName === 'settings') renderSettingsTab();
     if (tabName === 'home') renderRecentTransactions();
 }
 
-// ==================== ONGLET ACCUEIL ====================
+// ==================== RENDER ACCUEIL ====================
 
 function renderAccountCards() {
     const container = document.getElementById('accountsCards');
@@ -43,9 +57,7 @@ function renderHomeSummary() {
     const net = income - expense;
     const debut = window.currentPeriode?.debut;
     const fin = window.currentPeriode?.fin;
-    const nbJ = debut && fin
-        ? Math.max(1, Math.ceil((new Date(fin) - new Date(debut)) / 86400000))
-        : 30;
+    const nbJ = debut && fin ? Math.max(1, Math.ceil((new Date(fin) - new Date(debut)) / 86400000)) : 30;
     const avg = expense / nbJ;
 
     setEl('homeExpense', fmt(expense));
@@ -92,7 +104,7 @@ function buildTxRow(t, compact = false) {
         </div>`;
 }
 
-// ==================== ONGLET TRANSACTIONS (liste) ====================
+// ==================== ONGLET TRANSACTIONS ====================
 
 function updateTransactionsTable() {
     const container = document.getElementById('transactionsTableBody');
@@ -104,7 +116,6 @@ function updateTransactionsTable() {
     if (ft === 'expense') filtered = filtered.filter(t => t.type === 'expense');
     if (ft === 'income')  filtered = filtered.filter(t => t.type === 'income');
 
-    // Tri
     const sc = window.sortColumn || 'date';
     const so = window.sortOrder || 'desc';
     filtered.sort((a, b) => {
@@ -147,6 +158,15 @@ function setFilterType(type) {
     });
     updateTransactionsTable();
 }
+
+window.changePage = (delta) => {
+    let count = window.transactionsData?.length || 0;
+    if (window.filterType === 'expense') count = window.transactionsData?.filter(t => t.type === 'expense').length || 0;
+    else if (window.filterType === 'income') count = window.transactionsData?.filter(t => t.type === 'income').length || 0;
+    const total = Math.ceil(count / (window.rowsPerPage || 10));
+    const newPage = (window.currentPage || 1) + delta;
+    if (newPage >= 1 && newPage <= total) { window.currentPage = newPage; updateTransactionsTable(); }
+};
 
 // ==================== ONGLET STATS ====================
 
@@ -205,10 +225,7 @@ function renderDonutChart() {
         options: {
             cutout: '65%',
             plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: { color: '#9aa3b8', font: { size: 11 }, padding: 14, boxWidth: 10 }
-                }
+                legend: { position: 'bottom', labels: { color: '#9aa3b8', font: { size: 11 }, padding: 14, boxWidth: 10 } }
             }
         }
     });
@@ -217,27 +234,22 @@ function renderDonutChart() {
 function renderBalanceCurve() {
     const ctx = document.getElementById('balanceChart');
     if (!ctx) return;
-
     const txs = [...(window.transactionsData || [])].sort((a,b) => new Date(a.date) - new Date(b.date));
     if (!txs.length) return;
-
-    // Agréger par date
     const byDate = new Map();
     txs.forEach(t => {
         const d = t.date;
         const delta = t.type === 'income' ? t.amount : -t.amount;
         byDate.set(d, (byDate.get(d) || 0) + delta);
     });
-
     const dates = [...byDate.keys()].sort();
     let running = 0;
     const values = dates.map(d => { running += byDate.get(d); return running; });
-
     if (balanceChartInstance) balanceChartInstance.destroy();
     balanceChartInstance = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: dates.map(d => d.slice(5)), // MM-DD
+            labels: dates.map(d => d.slice(5)),
             datasets: [{
                 label: 'Solde net',
                 data: values,
@@ -263,14 +275,11 @@ function renderBalanceCurve() {
 async function renderComparison() {
     const el = document.getElementById('compareCard');
     if (!el || !window.currentPeriode) return;
-
     const debut = new Date(window.currentPeriode.debut);
     const fin = new Date(window.currentPeriode.fin);
     const diff = fin - debut;
-
     const prevDebut = new Date(debut - diff - 86400000).toISOString().slice(0,10);
     const prevFin  = new Date(debut - 86400000).toISOString().slice(0,10);
-
     try {
         const db = window.db || window._db;
         if (!db || !window.currentUser) { el.innerHTML = '<div class="empty-state">Données non disponibles</div>'; return; }
@@ -279,16 +288,12 @@ async function renderComparison() {
             .eq('user_id', window.currentUser.id)
             .gte('date', prevDebut)
             .lte('date', prevFin);
-
         let prevExp = 0, prevInc = 0;
         (prev || []).forEach(t => { if (t.type === 'expense') prevExp += t.amount; else prevInc += t.amount; });
-
         let curExp = 0, curInc = 0;
         (window.transactionsData || []).forEach(t => { if (t.type === 'expense') curExp += t.amount; else curInc += t.amount; });
-
         const expDelta = prevExp ? Math.round((curExp - prevExp) / prevExp * 100) : null;
         const incDelta = prevInc ? Math.round((curInc - prevInc) / prevInc * 100) : null;
-
         el.innerHTML = `
             <div class="compare-row">
                 <span class="compare-label">💸 Dépenses</span>
@@ -318,7 +323,6 @@ async function generateInsights() {
     if (!el) return;
     const txs = window.transactionsData || [];
     if (!txs.length) { el.innerHTML = '<p>Aucune donnée pour cette période.</p>'; return; }
-
     let expense = 0, income = 0;
     const catMap = new Map();
     txs.forEach(t => {
@@ -328,14 +332,12 @@ async function generateInsights() {
             catMap.set(n, (catMap.get(n) || 0) + t.amount);
         } else income += t.amount;
     });
-
     const debut = window.currentPeriode?.debut;
     const fin = window.currentPeriode?.fin;
     const nbJ = debut && fin ? Math.max(1, Math.ceil((new Date(fin) - new Date(debut)) / 86400000)) : 30;
     const avg = expense / nbJ;
     const net = income - expense;
     const topCat = [...catMap.entries()].sort((a,b) => b[1]-a[1])[0];
-
     el.innerHTML = `
         <p>📉 Moyenne/jour : <strong>${fmt(avg)} F</strong></p>
         <p>⚖️ Solde net : <strong style="color:${net>=0?'var(--green)':'var(--red)'}">${net>=0?'+':''}${fmt(net)} F</strong></p>
@@ -425,51 +427,6 @@ window.deleteCategorySettings = async (id) => {
     }
 };
 
-// ==================== EXPORT CSV ====================
-
-function exportCSV() {
-    const txs = window.transactionsData || [];
-    if (!txs.length) { alert('Aucune transaction à exporter.'); return; }
-
-    const header = ['Date', 'Type', 'Montant (F)', 'Catégorie', 'Compte', 'Description'];
-    const rows = txs.map(t => [
-        t.date,
-        t.type === 'expense' ? 'Dépense' : 'Revenu',
-        t.amount,
-        t.categories?.name || 'Autres',
-        t.accounts?.name || '?',
-        (t.description || '').replace(/,/g, ';')
-    ]);
-
-    const csv = [header, ...rows].map(r => r.join(',')).join('\n');
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `kaalisi_export_${new Date().toISOString().slice(0,10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-}
-
-// ==================== MODAL TYPE TOGGLE ====================
-
-function setTransType(value) {
-    document.getElementById('transType').value = value;
-    document.querySelectorAll('.type-toggle-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.value === value);
-    });
-}
-
-// ==================== PÉRIODE STATS (pills indépendantes) ====================
-
-function loadPeriodStats(period) {
-    document.querySelectorAll('#tab-stats .pill').forEach(b => {
-        b.classList.toggle('active', b.dataset.period === period);
-    });
-    // Réutilise loadPeriod d'app.js mais affiche sur l'onglet stats
-    if (window.loadPeriod) window.loadPeriod(period).then(() => renderStatsTab());
-}
-
 // ==================== HELPERS ====================
 
 function fmt(n) {
@@ -481,95 +438,75 @@ function setEl(id, val) {
     if (el) el.textContent = val + ' F';
 }
 
-// ==================== MODAL HELPERS ====================
-
-function closeModal(id) {
-    const m = document.getElementById(id);
-    if (m) m.classList.remove('open');
-}
-
 function openModal(id) {
     const m = document.getElementById(id);
     if (m) m.classList.add('open');
 }
 
-// Fermer modal au clic fond
-document.addEventListener('click', e => {
-    if (e.target.classList.contains('modal')) {
-        e.target.classList.remove('open');
-    }
-});
+window.closeModal = function closeModal(id) {
+    const m = document.getElementById(id);
+    if (m) m.classList.remove('open');
+};
 
-// ==================== BOUTONS PARAMÈTRES ====================
+function setTransType(value) {
+    document.getElementById('transType').value = value;
+    document.querySelectorAll('.type-toggle-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.value === value);
+    });
+}
 
-document.getElementById('openAddAccountBtn')?.addEventListener('click', () => openModal('addAccountModal'));
-document.getElementById('openAddCategoryBtn')?.addEventListener('click', () => openModal('addCategoryModal'));
+function loadPeriodStats(period) {
+    document.querySelectorAll('#tab-stats .pill').forEach(b => {
+        b.classList.toggle('active', b.dataset.period === period);
+    });
+    if (window.loadPeriod) window.loadPeriod(period).then(() => renderStatsTab());
+}
 
-document.getElementById('addAccountBtn')?.addEventListener('click', async () => {
-    const name = document.getElementById('newAccountName').value.trim().toLowerCase().replace(/\s+/g,'_');
-    const balance = parseFloat(document.getElementById('newAccountBalance').value) || 0;
-    if (!name) return;
-    await window.executeInstruction({ action: 'add_account', new_name: name, balance });
-    document.getElementById('newAccountName').value = '';
-    document.getElementById('newAccountBalance').value = '0';
-    closeModal('addAccountModal');
-    renderAccountCards();
-    renderSettingsTab();
-});
+function exportCSV() {
+    const txs = window.transactionsData || [];
+    if (!txs.length) { alert('Aucune transaction à exporter.'); return; }
+    const header = ['Date', 'Type', 'Montant (F)', 'Catégorie', 'Compte', 'Description'];
+    const rows = txs.map(t => [
+        t.date,
+        t.type === 'expense' ? 'Dépense' : 'Revenu',
+        t.amount,
+        t.categories?.name || 'Autres',
+        t.accounts?.name || '?',
+        (t.description || '').replace(/,/g, ';')
+    ]);
+    const csv = [header, ...rows].map(r => r.join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `kaalisi_export_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+}
 
-document.getElementById('addCategoryBtn')?.addEventListener('click', async () => {
-    const name = document.getElementById('newCategoryName').value.trim();
-    const icon = document.getElementById('newCategoryIcon').value.trim() || '📌';
-    if (!name || !window.currentUser || !window.db) return;
-    const { data } = await window.db.from('categories')
-        .insert({ user_id: window.currentUser.id, name, icon })
-        .select();
-    if (data?.[0]) {
-        window.categoriesMap.set(data[0].id, data[0]);
-        document.getElementById('newCategoryName').value = '';
-        document.getElementById('newCategoryIcon').value = '';
-        closeModal('addCategoryModal');
-        renderCategoriesSettings();
-    }
-});
+// ==================== PATCH APP.JS (overrides) ====================
 
-// ==================== PATCH app.js FUNCTIONS ====================
-// Ces fonctions remplacent / complètent celles d'app.js
-
-// Override updateBalancesDisplay pour aussi mettre à jour les cartes
-const _origUpdateBalances = window.updateBalancesDisplay;
 window.updateBalancesDisplay = function() {
-    if (_origUpdateBalances) _origUpdateBalances();
+    if (window._origUpdateBalances) window._origUpdateBalances();
     renderAccountCards();
-    // Mettre à jour le badge email top bar
     const badge = document.getElementById('userEmailShort');
     if (badge && window.currentUser) {
         badge.textContent = window.currentUser.email.split('@')[0];
     }
 };
 
-// Override refreshDashboard pour aussi rafraîchir la home
-const _origRefresh = window.refreshDashboard;
 window.refreshDashboard = async function() {
-    if (_origRefresh) await _origRefresh();
+    if (window._origRefresh) await window._origRefresh();
     renderAccountCards();
     renderHomeSummary();
     renderRecentTransactions();
     updateTransactionsTable();
 };
 
-// Override updateStats (inutile dans la nouvelle UI)
-window.updateStats = function() {
-    renderHomeSummary();
-};
-
-// Override updateChart (géré par renderDonutChart dans stats)
+window.updateStats = function() { renderHomeSummary(); };
 window.updateChart = function() {};
-
-// Override updateTransactionsTable
 window.updateTransactionsTable = updateTransactionsTable;
 
-// Override openTransactionModal pour utiliser la nouvelle modal
 window.openTransactionModal = function(mode = 'add', id = null) {
     const title = document.getElementById('transactionModalTitle');
     if (title) title.textContent = mode === 'edit' ? 'Modifier transaction' : 'Ajouter transaction';
@@ -602,15 +539,43 @@ window.openTransactionModal = function(mode = 'add', id = null) {
     openModal('transactionModal');
 };
 
-// Override closeModal
-window.closeModal = closeModal;
+// ==================== EVENTS ====================
+document.getElementById('openAddAccountBtn')?.addEventListener('click', () => openModal('addAccountModal'));
+document.getElementById('openAddCategoryBtn')?.addEventListener('click', () => openModal('addCategoryModal'));
 
-// Logout button
+document.getElementById('addAccountBtn')?.addEventListener('click', async () => {
+    const name = document.getElementById('newAccountName').value.trim().toLowerCase().replace(/\s+/g,'_');
+    const balance = parseFloat(document.getElementById('newAccountBalance').value) || 0;
+    if (!name) return;
+    await window.executeInstruction({ action: 'add_account', new_name: name, balance });
+    document.getElementById('newAccountName').value = '';
+    document.getElementById('newAccountBalance').value = '0';
+    closeModal('addAccountModal');
+    renderAccountCards();
+    renderSettingsTab();
+});
+
+document.getElementById('addCategoryBtn')?.addEventListener('click', async () => {
+    const name = document.getElementById('newCategoryName').value.trim();
+    const icon = document.getElementById('newCategoryIcon').value.trim() || '📌';
+    if (!name || !window.currentUser || !window.db) return;
+    const { data } = await window.db.from('categories')
+        .insert({ user_id: window.currentUser.id, name, icon })
+        .select();
+    if (data?.[0]) {
+        window.categoriesMap.set(data[0].id, data[0]);
+        document.getElementById('newCategoryName').value = '';
+        document.getElementById('newCategoryIcon').value = '';
+        closeModal('addCategoryModal');
+        renderCategoriesSettings();
+    }
+});
+
 document.getElementById('logoutBtn')?.addEventListener('click', () => {
     if (window.logout) window.logout();
 });
 
-// Init email badge quand l'app démarre
+// Initialisation du badge email
 setTimeout(() => {
     const badge = document.getElementById('userEmailShort');
     if (badge && window.currentUser) {
