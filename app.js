@@ -183,9 +183,15 @@ async function sendMessage() {
     addChatMessage('user', message);
     userInput.value = '';
 
-    const loadId = Date.now();
-    addChatMessage('ai', '⏳ ...', false);
-    const aiMsgDiv = chatMessages.lastChild;
+    // Message temporaire "en réflexion"
+    const tempId = Date.now();
+    const tempDiv = document.createElement('div');
+    tempDiv.className = 'ai-msg';
+    tempDiv.textContent = '⏳ ...';
+    chatMessages.appendChild(tempDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    // On ajoute un message factice à l'historique local (pour le contexte), mais on le retirera après
+    conversationMessages.push({ role: 'assistant', content: '⏳ ...' });
 
     try {
         const res = await fetch('/api/chat', {
@@ -195,26 +201,27 @@ async function sendMessage() {
                 message,
                 userId: currentUser.id,
                 periode: currentPeriode,
-                history: conversationMessages.slice(0, -1) // tout sauf le dernier message déjà ajouté
+                history: conversationMessages.slice(0, -1) // tout sauf le message temporaire
             })
         });
         const result = await res.json();
-        aiMsgDiv.textContent = result.message || 'Action exécutée.';
-        
-        // Exécuter l'action retournée (add_expense, etc.)
+
+        // Supprimer le message temporaire
+        tempDiv.remove();
+        conversationMessages.pop(); // enlever le message temporaire
+
+        // Exécuter l'action ou afficher la réponse
         if (result.action) {
             await executeInstruction(result);
-            await refreshDashboard();
         } else {
-            // Juste une réponse texte, on l'a déjà affichée
+            // Simple réponse texte
+            addChatMessage('ai', result.message || 'Action exécutée.', false);
         }
-        // La réponse a été ajoutée dans addChatMessage lors de l'affichage, mais attention : on l'a déjà mise dans le DOM.
-        // Pour éviter doublon dans conversationMessages, on ajuste :
-        // On supprime le dernier message IA vide et on ajoute proprement
-        conversationMessages.pop(); // enlever le message "⏳"
-        addChatMessage('ai', aiMsgDiv.textContent, false);
+        await refreshDashboard();
     } catch (err) {
-        aiMsgDiv.textContent = '❌ Erreur de connexion.';
+        tempDiv.remove();
+        conversationMessages.pop();
+        addChatMessage('ai', '❌ Erreur de connexion.', false);
         console.error(err);
     }
 }
