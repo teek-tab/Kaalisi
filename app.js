@@ -11,7 +11,16 @@ let categoriesMap = new Map();
 let accountsMap = new Map();
 let transactionsData = [];
 let lastCreatedTransactionId = null;
+let abortController = null;
 
+// État du tableau
+let currentPage = 1;
+const rowsPerPage = 10;
+let filterType = 'all';     // 'all', 'expense', 'income'
+let sortColumn = 'date';    // 'date', 'amount', 'category'
+let sortOrder = 'desc';     // 'asc' ou 'desc'
+
+// DOM
 const authScreen = document.getElementById('authScreen');
 const dashboard = document.getElementById('dashboardScreen');
 const userEmailSpan = document.getElementById('userEmail');
@@ -19,7 +28,6 @@ const balancesDiv = document.getElementById('balances');
 const chatMessages = document.getElementById('chatMessages');
 const userInput = document.getElementById('userInput');
 const statsContainer = document.getElementById('statsContainer');
-const transactionsListDiv = document.getElementById('transactionsList');
 let expensesChart = null;
 
 // ==================== AUTH ====================
@@ -47,7 +55,7 @@ async function checkAuth() {
         userEmailSpan.textContent = currentUser.email;
         await loadUserData();
         await loadPeriod('month');
-        addChatMessage('system', "🟢 Connecté ! Parlez naturellement : \"j'ai dépensé 1500F taxi wave\", \"don de maman 300000F cash\", \"supprime la dernière\"...");
+        addChatMessage('system', "🟢 Connecté ! Parlez naturellement.");
     } else {
         authScreen.style.display = 'flex';
         dashboard.style.display = 'none';
@@ -99,7 +107,10 @@ async function setPeriodeCustom() {
 async function refreshDashboard() {
     await loadTransactions();
     await loadUserData();
-    updateStats(); updateChart(); updateTransactionsList(); await generateInsights();
+    updateStats();
+    updateChart();
+    updateTransactionsTable();
+    await generateInsights();
 }
 async function loadTransactions() {
     const { data } = await db.from('transactions')
@@ -111,7 +122,7 @@ async function loadTransactions() {
     transactionsData = data || [];
 }
 
-// ==================== STATS ====================
+// ==================== STATS + CHART ====================
 function updateStats() {
     let total = 0, income = 0;
     transactionsData.forEach(t => { if (t.type==='expense') total+=t.amount; if (t.type==='income') income+=t.amount; });
@@ -134,20 +145,6 @@ function updateChart() {
         options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
     });
 }
-function updateTransactionsList() {
-    if (!transactionsData.length) { transactionsListDiv.innerHTML = '<div class="transaction-item">Aucune transaction</div>'; return; }
-    transactionsListDiv.innerHTML = transactionsData.slice(0,20).map(t => {
-        const cat = t.categories || { name:'Autres', icon:'📦' };
-        const acc = t.accounts || { name:'cash' };
-        return `<div class="transaction-item" data-id="${t.id}">
-            <div><strong>${t.date}</strong> ${cat.icon} ${cat.name}${t.description?' - '+t.description:''}<br><small>${acc.name}</small></div>
-            <div style="display:flex;align-items:center;gap:12px;">
-                <span style="font-weight:bold;color:${t.type==='expense'?'#ef4444':'#10b981'}">${t.type==='expense'?'-':'+'} ${t.amount} F</span>
-                <button class="btn-icon" onclick="editTransaction('${t.id}')">✏️</button>
-                <button class="btn-icon" onclick="deleteTransaction('${t.id}')">🗑️</button>
-            </div></div>`;
-    }).join('');
-}
 async function generateInsights() {
     const total = transactionsData.reduce((s,t)=>t.type==='expense'?s+t.amount:s,0);
     const nbJ = Math.max(1,Math.ceil((new Date(currentPeriode.fin)-new Date(currentPeriode.debut))/(1000*3600*24)));
@@ -157,13 +154,120 @@ async function generateInsights() {
         <p>💡 ${moy>5000?'Dépenses élevées !':'Bon contrôle du budget !'}</p>`;
 }
 
-// ==================== CHAT ====================
+// ==================== TABLEAU AVEC PAGINATION, FILTRES, TRIS ====================
+function updateTransactionsTable() {
+    const tbody = document.getElementById('transactionsTableBody');
+    const paginationDiv = document.getElementById('transactionsPagination');
+    if (!tbody || !paginationDiv) return;
+
+    // Filtrer
+    let filtered = [...transactionsData];
+    if (filterType === 'expense') filtered = filtered.filter(t => t.type === 'expense');
+    else if (filterType === 'income') filtered = filtered.filter(t => t.type === 'income');
+
+    // Trier
+    filtered.sort((a,b) => {
+        let valA, valB;
+        if (sortColumn === 'date') {
+            valA = new Date(a.date); valB = new Date(b.date);
+        } else if (sortColumn === 'amount') {
+            valA = a.amount; valB = b.amount;
+        } else if (sortColumn === 'category') {
+            valA = (a.categories?.name || '').toLowerCase();
+            valB = (b.categories?.name || '').toLowerCase();
+        } else { return 0; }
+        if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+        if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+        return 0;
+    });
+
+    // Paginer
+    const totalPages = Math.ceil(filtered.length / rowsPerPage) || 1;
+    if (currentPage > totalPages) currentPage = 1;
+    const start = (currentPage-1)*rowsPerPage;
+    const pageRows = filtered.slice(start, start+rowsPerPage);
+
+    // Remplir tableau
+    if (pageRows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-table">Aucune transaction pour cette période</td></tr>';
+    } else {
+        tbody.innerHTML = pageRows.map(t => {
+            const cat = t.categories || { name: 'Autres', icon: '📦' };
+            const acc = t.accounts || { name: 'cash' };
+            const amountClass = t.type === 'expense' ? 'expense' : 'income';
+            const amountSign = t.type === 'expense' ? '-' : '+';
+            return `
+                <tr>
+                    <td>${t.date}</td>
+                    <td><span class="category-badge">${cat.icon} ${cat.name}</span></td>
+                    <td class="${amountClass}">${amountSign} ${t.amount.toFixed(0)} F</td>
+                    <td>${acc.name}</td>
+                    <td title="${t.description || ''}">${(t.description || '').substring(0,30)}${(t.description?.length||0)>30?'…':''}</td>
+                    <td class="table-actions">
+                        <button class="btn-icon" onclick="editTransaction('${t.id}')" title="Modifier">✏️</button>
+                        <button class="btn-icon" onclick="deleteTransaction('${t.id}')" title="Supprimer">🗑️</button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    // Pagination
+    paginationDiv.innerHTML = `
+        <div class="pagination-info">${filtered.length} transaction(s) — Page ${currentPage} / ${totalPages}</div>
+        <div class="pagination-buttons">
+            <button class="btn-small" onclick="changePage(-1)" ${currentPage===1 ? 'disabled' : ''}>◀ Précédent</button>
+            <button class="btn-small" onclick="changePage(1)" ${currentPage===totalPages ? 'disabled' : ''}>Suivant ▶</button>
+        </div>
+    `;
+}
+
+window.changePage = function(delta) {
+    let filteredCount = transactionsData.length;
+    if (filterType === 'expense') filteredCount = transactionsData.filter(t => t.type === 'expense').length;
+    else if (filterType === 'income') filteredCount = transactionsData.filter(t => t.type === 'income').length;
+    const totalPages = Math.ceil(filteredCount / rowsPerPage) || 1;
+    const newPage = currentPage + delta;
+    if (newPage >= 1 && newPage <= totalPages) {
+        currentPage = newPage;
+        updateTransactionsTable();
+    }
+};
+
+function setFilterType(type) {
+    filterType = type;
+    currentPage = 1;
+    updateTransactionsTable();
+    document.querySelectorAll('.filter-transaction-btn').forEach(btn => {
+        if (btn.dataset.type === type) btn.classList.add('active');
+        else btn.classList.remove('active');
+    });
+}
+
+function setSort(column) {
+    if (sortColumn === column) {
+        sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+    } else {
+        sortColumn = column;
+        sortOrder = 'asc';
+    }
+    currentPage = 1;
+    updateTransactionsTable();
+    document.querySelectorAll('.sortable').forEach(th => {
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (th.dataset.sort === sortColumn) th.classList.add(sortOrder === 'asc' ? 'sort-asc' : 'sort-desc');
+    });
+}
+
+// ==================== CHAT IA ====================
 let msgCounter = 0;
-function addChatMessage(sender, text) {
+let waitingForResponse = false;
+
+function addChatMessage(sender, text, isSystem = false) {
     const id = ++msgCounter;
     const div = document.createElement('div');
-    div.id = 'msg-' + id;
-    div.className = sender==='user'?'user-msg':sender==='system'?'system-msg':'ai-msg';
+    div.id = 'msg-'+id;
+    div.className = sender==='user'?'user-msg':(sender==='system'||isSystem)?'system-msg':'ai-msg';
     div.style.whiteSpace = 'pre-line';
     div.textContent = text;
     chatMessages.appendChild(div);
@@ -173,31 +277,48 @@ function addChatMessage(sender, text) {
 function removeMessage(id) { document.getElementById('msg-'+id)?.remove(); }
 
 async function sendMessage() {
+    if (waitingForResponse) {
+        if (abortController) {
+            abortController.abort();
+            addChatMessage('system', '⏹️ Annulé par l’utilisateur.', true);
+            waitingForResponse = false;
+        }
+        return;
+    }
     const message = userInput.value.trim();
     if (!message) return;
     addChatMessage('user', message);
     userInput.value = '';
-    const loadId = addChatMessage('ai', '⏳ Kaalisi réfléchit...');
+    waitingForResponse = true;
+    const loadId = addChatMessage('ai', '⏳ Kaalisi réfléchit...', false);
+    abortController = new AbortController();
     try {
         const res = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message, userId: currentUser.id, periode: currentPeriode })
+            body: JSON.stringify({ message, userId: currentUser.id, periode: currentPeriode, recursionDepth: 0 }),
+            signal: abortController.signal
         });
         const result = await res.json();
         removeMessage(loadId);
-        // Support multi-actions
         const instructions = Array.isArray(result) ? result : [result];
         for (const inst of instructions) await executeInstruction(inst);
         await refreshDashboard();
     } catch (err) {
-        removeMessage(loadId);
-        addChatMessage('ai', '❌ Erreur de connexion. Réessayez.');
-        console.error(err);
+        if (err.name === 'AbortError') {
+            removeMessage(loadId);
+            addChatMessage('system', '❌ Requête annulée.', true);
+        } else {
+            removeMessage(loadId);
+            addChatMessage('ai', '❌ Erreur de connexion. Réessayez.');
+            console.error(err);
+        }
+    } finally {
+        waitingForResponse = false;
+        abortController = null;
     }
 }
 
-// ==================== EXÉCUTION ====================
 async function executeInstruction(inst) {
     try {
         switch(inst.action) {
@@ -215,6 +336,7 @@ async function executeInstruction(inst) {
     } catch(err) { console.error(err); addChatMessage('ai','❌ Erreur exécution.'); }
 }
 
+// ==================== GESTION DES TRANSACTIONS ====================
 async function handleAddTransaction(inst) {
     let catId = null;
     for (let [id,cat] of categoriesMap.entries()) { if (cat.name.toLowerCase()===(inst.category||'').toLowerCase()) { catId=id; break; } }
@@ -284,7 +406,6 @@ async function handleUpdateTransaction(inst) {
     if(f.amount!==undefined) upd.amount=f.amount;
     if(f.description!==undefined) upd.description=f.description;
     if(f.date!==undefined) upd.date=f.date;
-    if(f.type!==undefined) upd.type=f.type;
     let newAccId=t.account_id;
     if(f.account) { for(let [id,a] of accountsMap.entries()) { if(a.name===f.account){newAccId=id;break;} } upd.account_id=newAccId; }
     if(f.category) {
@@ -295,8 +416,8 @@ async function handleUpdateTransaction(inst) {
     }
     const {error}=await db.from('transactions').update(upd).eq('id',transId);
     if(!error) {
-        const nAcc=accountsMap.get(newAccId), nAmt=upd.amount!==undefined?upd.amount:t.amount, nType=upd.type||t.type;
-        if(nAcc){const d=nType==='income'?nAmt:-nAmt;await db.from('accounts').update({balance:nAcc.balance+d}).eq('id',newAccId);nAcc.balance+=d;}
+        const nAcc=accountsMap.get(newAccId), nAmt=upd.amount!==undefined?upd.amount:t.amount;
+        if(nAcc){ const delta = t.type==='income' ? nAmt : -nAmt; await db.from('accounts').update({balance:nAcc.balance+delta}).eq('id',newAccId); nAcc.balance+=delta; }
         updateBalancesDisplay(); addChatMessage('ai','✏️ Transaction modifiée.');
     } else addChatMessage('ai','❌ Erreur modification.');
 }
@@ -337,7 +458,7 @@ function handleQuery(inst) {
     } else { addChatMessage('ai',inst.message||'Analyse effectuée.'); }
 }
 
-// ==================== MODALS ====================
+// ==================== MODALS ET ÉDITION ====================
 function openTransactionModal(mode='add', transactionId=null) {
     const modal=document.getElementById('transactionModal');
     document.getElementById('transactionModalTitle').textContent=mode==='edit'?'✏️ Modifier':'➕ Ajouter transaction';
@@ -352,7 +473,6 @@ function openTransactionModal(mode='add', transactionId=null) {
     } else { form.reset(); document.getElementById('transDate').value=new Date().toISOString().split('T')[0]; }
     modal.style.display='flex';
 }
-
 async function saveTransactionForm() {
     const form=document.getElementById('transactionForm');
     const mode=form.dataset.mode, transId=form.dataset.transactionId;
@@ -370,9 +490,8 @@ async function saveTransactionForm() {
     }
     closeModal('transactionModal'); await refreshDashboard();
 }
-
-async function editTransaction(id){openTransactionModal('edit',id);}
-async function deleteTransaction(id){if(!confirm('Supprimer ?'))return;await handleDeleteTransaction({transaction_id:id});await refreshDashboard();}
+window.editTransaction = async function(id) { openTransactionModal('edit', id); };
+window.deleteTransaction = async function(id) { if(!confirm('Supprimer cette transaction ?')) return; await handleDeleteTransaction({transaction_id:id}); await refreshDashboard(); };
 
 function openAccountsModal(){
     const modal=document.getElementById('accountsModal'), listDiv=document.getElementById('accountsList');
@@ -384,7 +503,6 @@ function openAccountsModal(){
     }
     modal.style.display='flex';
 }
-
 async function addAccountManual(){
     const name=document.getElementById('newAccountName').value.trim().toLowerCase().replace(/\s+/g,'_');
     const balance=parseFloat(document.getElementById('newAccountBalance').value)||0;
@@ -393,19 +511,16 @@ async function addAccountManual(){
     document.getElementById('newAccountName').value='';document.getElementById('newAccountBalance').value='';
     openAccountsModal();
 }
-
-async function editAccount(id){
-    const acc=accountsMap.get(id);if(!acc)return;
+window.editAccount = async function(id){
+    const acc=accountsMap.get(id); if(!acc)return;
     const n=prompt('Nouveau nom:',acc.name);
     if(n&&n!==acc.name){await handleUpdateAccount({old_name:acc.name,new_name:n});openAccountsModal();}
-}
-
-async function deleteAccount(id){
+};
+window.deleteAccount = async function(id){
     const acc=accountsMap.get(id);if(!acc||!confirm(`Supprimer "${acc.name}" ?`))return;
     const {error}=await db.from('accounts').delete().eq('id',id).eq('user_id',currentUser.id);
     if(!error){accountsMap.delete(id);updateBalancesDisplay();openAccountsModal();await refreshDashboard();}
-}
-
+};
 function closeModal(id){document.getElementById(id).style.display='none';}
 
 async function showCategoriesModal(){
@@ -430,17 +545,18 @@ async function addCategory(){
 }
 
 // ==================== EVENTS ====================
-document.getElementById('loginBtn').onclick=login;
-document.getElementById('registerBtn').onclick=register;
-document.getElementById('logoutBtn').onclick=logout;
-document.getElementById('sendBtn').onclick=sendMessage;
-document.getElementById('applyCustomBtn').onclick=setPeriodeCustom;
-document.querySelectorAll('.filter-btn').forEach(b=>b.onclick=()=>loadPeriod(b.dataset.period));
-document.getElementById('manageCategoriesBtn').onclick=showCategoriesModal;
-document.getElementById('addCategoryBtn').onclick=addCategory;
-const abt=document.getElementById('addTransactionBtn');if(abt)abt.onclick=()=>openTransactionModal('add');
-const mab=document.getElementById('manageAccountsBtn');if(mab)mab.onclick=openAccountsModal;
-document.querySelectorAll('.close').forEach(b=>b.onclick=()=>b.closest('.modal')&&(b.closest('.modal').style.display='none'));
-window.onclick=e=>{if(e.target.classList.contains('modal'))e.target.style.display='none';};
-userInput.addEventListener('keydown',e=>{if(e.key==='Enter')sendMessage();});
+document.getElementById('loginBtn').onclick = login;
+document.getElementById('registerBtn').onclick = register;
+document.getElementById('logoutBtn').onclick = logout;
+document.getElementById('sendBtn').onclick = sendMessage;
+document.getElementById('applyCustomBtn').onclick = setPeriodeCustom;
+document.querySelectorAll('.filter-btn').forEach(b => b.onclick = () => loadPeriod(b.dataset.period));
+document.getElementById('manageCategoriesBtn').onclick = showCategoriesModal;
+document.getElementById('addCategoryBtn').onclick = addCategory;
+const addTxBtn = document.getElementById('addTransactionBtn'); if(addTxBtn) addTxBtn.onclick = () => openTransactionModal('add');
+const manageAccBtn = document.getElementById('manageAccountsBtn'); if(manageAccBtn) manageAccBtn.onclick = openAccountsModal;
+const addAccBtn = document.getElementById('addAccountBtn'); if(addAccBtn) addAccBtn.onclick = addAccountManual;
+document.querySelectorAll('.close').forEach(b => b.onclick = () => b.closest('.modal') && (b.closest('.modal').style.display = 'none'));
+window.onclick = e => { if(e.target.classList.contains('modal')) e.target.style.display = 'none'; };
+userInput.addEventListener('keydown', e => { if(e.key === 'Enter') sendMessage(); });
 checkAuth();
