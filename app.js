@@ -21,6 +21,13 @@ let sortOrder = 'desc';
 
 let conversationMessages = [];
 
+// ========== CACHE & VERROUS ==========
+let refreshPromise = null;
+let lastUserDataLoad = 0;
+const USER_DATA_CACHE_MS = 30000; // 30 secondes de cache
+let lastTransactionsLoad = { key: '', time: 0 };
+const TRANSACTIONS_CACHE_MS = 10000; // 10 secondes de cache
+
 // DOM
 const authScreen = document.getElementById('authScreen');
 const dashboard = document.getElementById('dashboardScreen');
@@ -44,6 +51,7 @@ async function register() {
     else alert('Inscription réussie ! Connectez-vous.');
 }
 async function logout() { await db.auth.signOut(); window.location.reload(); }
+
 async function checkAuth() {
     const { data: { session } } = await db.auth.getSession();
     if (session?.user) {
@@ -51,10 +59,10 @@ async function checkAuth() {
         window.currentUser = currentUser;
         authScreen.style.display = 'none';
         dashboard.style.display = 'block';
-        // Patch: vérifier si l'élément existe
         const userEmailSpan = document.getElementById('userEmail');
         if (userEmailSpan) userEmailSpan.textContent = currentUser.email;
-        await loadUserData();
+        // Charger les données utilisateur UNE SEULE FOIS
+        await loadUserData(true); // force=true au premier chargement
         await loadPeriod('month');
         resetConversation();
         addChatMessage('system', '🟢 Connecté ! Parlez naturellement.');
@@ -196,7 +204,7 @@ async function executeInstruction(inst) {
         }
     } catch (e) {
         console.error(e);
-        addChatMessage('ai', '❌ Erreur lors de l\'exécution.');
+        addChatMessage('ai', "❌ Erreur lors de l'exécution.");
     }
 }
 async function handleAddTransaction(inst) {
@@ -321,8 +329,16 @@ async function handleUpdateAccount(inst) {
     addChatMessage('ai', `🏦 Compte renommé : "${inst.old_name}" → "${newName}".`);
 }
 
-// ==================== DONNÉES ====================
-async function loadUserData() {
+// ==================== DONNÉES AVEC CACHE ====================
+async function loadUserData(force = false) {
+    const now = Date.now();
+    // Ne pas recharger si les données sont fraîches (sauf force=true)
+    if (!force && now - lastUserDataLoad < USER_DATA_CACHE_MS && accountsMap.size > 0 && categoriesMap.size > 0) {
+        console.log('[CACHE] loadUserData skipped — données fraîches');
+        return;
+    }
+    lastUserDataLoad = now;
+
     const { data: accounts } = await db.from('accounts').select('*').eq('user_id', currentUser.id);
     if (accounts) { accountsMap.clear(); accounts.forEach(a => accountsMap.set(a.id, a)); updateBalancesDisplay(); }
     const { data: cats } = await db.from('categories').select('*').eq('user_id', currentUser.id);
@@ -335,7 +351,6 @@ function updateBalancesDisplay() {
     if (balancesDiv) {
         balancesDiv.innerHTML = Array.from(accountsMap.values()).map(a => `<span>${getEmoji(a.name)} ${a.name}: ${a.balance} F</span>`).join('');
     }
-    // Ne pas appeler window._origUpdateBalances ici
 }
 function getEmoji(name) { return { cash: '💵', wave: '📱', epargne: '💰' }[name] || '🏦'; }
 
@@ -362,32 +377,59 @@ async function loadPeriod(period) {
     window.currentPeriode = currentPeriode;
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
     document.querySelector(`.filter-btn[data-period="${period}"]`)?.classList.add('active');
+    // Invalider le cache transactions quand la période change
+    lastTransactionsLoad = { key: '', time: 0 };
     await refreshDashboard();
 }
 async function setPeriodeCustom() {
     const debut = document.getElementById('dateDebut').value;
     const fin = document.getElementById('dateFin').value;
-    if (debut && fin) { currentPeriode = { debut, fin }; window.currentPeriode = currentPeriode; await refreshDashboard(); }
+    if (debut && fin) { 
+        currentPeriode = { debut, fin }; 
+        window.currentPeriode = currentPeriode; 
+        lastTransactionsLoad = { key: '', time: 0 };
+        await refreshDashboard(); 
+    }
 }
 
-let isRefreshing = false;
-
+// ==================== REFRESH AVEC VERROU GLOBAL ====================
 async function refreshDashboard() {
-    if (isRefreshing) return;
-    isRefreshing = true;
+    // Si un refresh est déjà en cours, attendre qu'il finisse
+    if (refreshPromise) {
+        console.log('[REFRESH] Déjà en cours, attente...');
+        return refreshPromise;
+    }
+
+    refreshPromise = (async () => {
+        try {
+            await loadTransactions();
+            await loadUserData(); // Utilise le cache si frais
+            updateStats();
+            updateChart();
+            updateTransactionsTable();
+            await generateInsights();
+        } catch (err) {
+            console.error('[REFRESH] Erreur:', err);
+        }
+    })();
+
     try {
-        await loadTransactions();
-        await loadUserData();
-        updateStats();
-        updateChart();
-        updateTransactionsTable();
-        await generateInsights();
+        await refreshPromise;
     } finally {
-        isRefreshing = false;
+        refreshPromise = null;
     }
 }
 
 async function loadTransactions() {
+    const cacheKey = `${currentUser.id}_${currentPeriode.debut}_${currentPeriode.fin}`;
+    const now = Date.now();
+
+    // Utiliser le cache si même période et données fraîches
+    if (now - lastTransactionsLoad.time < TRANSACTIONS_CACHE_MS && lastTransactionsLoad.key === cacheKey) {
+        console.log('[CACHE] loadTransactions skipped — même période, données fraîches');
+        return;
+    }
+
     const { data } = await db.from('transactions')
         .select('*, categories(name,icon), accounts(name)')
         .eq('user_id', currentUser.id)
@@ -396,6 +438,7 @@ async function loadTransactions() {
         .order('date', { ascending: false });
     transactionsData = data || [];
     window.transactionsData = transactionsData;
+    lastTransactionsLoad = { key: cacheKey, time: Date.now() };
 }
 function updateStats() {
     let total = 0, income = 0;
@@ -435,7 +478,7 @@ async function generateInsights() {
     }
 }
 
-// ==================== EVENT LISTENERS (avec vérifications) ====================
+// ==================== EVENT LISTENERS ====================
 document.getElementById('loginBtn').onclick = login;
 document.getElementById('registerBtn').onclick = register;
 document.getElementById('logoutBtn').onclick = logout;
@@ -443,7 +486,6 @@ document.getElementById('sendBtn').onclick = sendMessage;
 document.getElementById('applyCustomBtn').onclick = setPeriodeCustom;
 document.querySelectorAll('.filter-btn').forEach(b => b.onclick = () => loadPeriod(b.dataset.period));
 
-// Patch : éviter les appels à des éléments inexistants
 const manageCategoriesBtn = document.getElementById('manageCategoriesBtn');
 if (manageCategoriesBtn) manageCategoriesBtn.onclick = function showCategoriesModal() { alert('Fonction à implémenter'); };
 const addCategoryBtn = document.getElementById('addCategoryBtn');
@@ -452,7 +494,6 @@ const addTransactionBtn = document.getElementById('addTransactionBtn');
 if (addTransactionBtn) addTransactionBtn.onclick = () => window.openTransactionModal('add');
 const manageAccountsBtn = document.getElementById('manageAccountsBtn');
 if (manageAccountsBtn) manageAccountsBtn.onclick = function openAccountsModal() { alert('Fonction à implémenter'); };
-const addAccountBtn = document.getElementById('addAccountBtn'); // déjà utilisé ailleurs
 const resetChatBtn = document.getElementById('resetChatBtn');
 if (resetChatBtn) resetChatBtn.onclick = resetConversation;
 
