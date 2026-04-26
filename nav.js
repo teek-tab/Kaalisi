@@ -169,11 +169,11 @@ window.changePage = (delta) => {
 };
 
 // ==================== ONGLET STATS ====================
+// NOTE: balanceChartInstance et expensesChartInstance sont DÉCLARÉS dans app.js
+// Ne pas les redéclarer ici !
 
-let balanceChartInstance = null;
-let expensesChartInstance = null;
 let comparisonCache = { key: '', data: null, time: 0 };
-const COMPARISON_CACHE_MS = 60000; // 1 minute
+const COMPARISON_CACHE_MS = 60000;
 
 function renderStatsTab() {
     renderStatsKPIs();
@@ -211,9 +211,9 @@ function renderDonutChart() {
             totals.set(n, (totals.get(n) || 0) + t.amount);
         }
     });
-    if (expensesChartInstance) expensesChartInstance.destroy();
+    if (window.expensesChartInstance) window.expensesChartInstance.destroy();
     if (!totals.size) { ctx.parentElement.innerHTML += '<div class="empty-state">Aucune dépense</div>'; return; }
-    expensesChartInstance = new Chart(ctx, {
+    window.expensesChartInstance = new Chart(ctx, {
         type: 'doughnut',
         data: {
             labels: [...totals.keys()],
@@ -247,8 +247,8 @@ function renderBalanceCurve() {
     const dates = [...byDate.keys()].sort();
     let running = 0;
     const values = dates.map(d => { running += byDate.get(d); return running; });
-    if (balanceChartInstance) balanceChartInstance.destroy();
-    balanceChartInstance = new Chart(ctx, {
+    if (window.balanceChartInstance) window.balanceChartInstance.destroy();
+    window.balanceChartInstance = new Chart(ctx, {
         type: 'line',
         data: {
             labels: dates.map(d => d.slice(5)),
@@ -286,7 +286,6 @@ async function renderComparison() {
     const cacheKey = `${prevDebut}_${prevFin}`;
     const now = Date.now();
 
-    // Utiliser le cache si disponible
     if (comparisonCache.key === cacheKey && now - comparisonCache.time < COMPARISON_CACHE_MS) {
         el.innerHTML = comparisonCache.data;
         return;
@@ -519,9 +518,7 @@ window.refreshDashboard = async function() {
     if (isNavRefreshing) return;
     isNavRefreshing = true;
     try {
-        // Appeler l'original qui a son propre verrou
         if (window._origRefresh) await window._origRefresh();
-        // Mettre à jour l'UI sans faire de nouveaux appels réseau
         renderAccountCards();
         renderHomeSummary();
         renderRecentTransactions();
@@ -532,7 +529,7 @@ window.refreshDashboard = async function() {
 };
 
 window.updateStats = function() { renderHomeSummary(); };
-window.updateChart = function() {}; // Le chart est géré par renderStatsTab
+window.updateChart = function() {};
 window.updateTransactionsTable = updateTransactionsTable;
 
 window.openTransactionModal = function(mode = 'add', id = null) {
@@ -602,9 +599,3 @@ document.getElementById('addCategoryBtn')?.addEventListener('click', async () =>
 document.getElementById('logoutBtn')?.addEventListener('click', () => {
     if (window.logout) window.logout();
 });
-
-// Initialisation du badge email — UNE SEULE FOIS
-const badge = document.getElementById('userEmailShort');
-if (badge && window.currentUser) {
-    badge.textContent = window.currentUser.email.split('@')[0];
-}
