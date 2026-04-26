@@ -5,7 +5,7 @@ if (themeToggle) {
     const savedTheme = localStorage.getItem('theme') || 'dark';
     document.documentElement.setAttribute('data-theme', savedTheme);
     themeToggle.textContent = savedTheme === 'dark' ? '🌙' : '☀️';
-    
+
     themeToggle.addEventListener('click', () => {
         const current = document.documentElement.getAttribute('data-theme');
         const next = current === 'dark' ? 'light' : 'dark';
@@ -172,6 +172,8 @@ window.changePage = (delta) => {
 
 let balanceChartInstance = null;
 let expensesChartInstance = null;
+let comparisonCache = { key: '', data: null, time: 0 };
+const COMPARISON_CACHE_MS = 60000; // 1 minute
 
 function renderStatsTab() {
     renderStatsKPIs();
@@ -275,11 +277,21 @@ function renderBalanceCurve() {
 async function renderComparison() {
     const el = document.getElementById('compareCard');
     if (!el || !window.currentPeriode) return;
+
     const debut = new Date(window.currentPeriode.debut);
     const fin = new Date(window.currentPeriode.fin);
     const diff = fin - debut;
     const prevDebut = new Date(debut - diff - 86400000).toISOString().slice(0,10);
     const prevFin  = new Date(debut - 86400000).toISOString().slice(0,10);
+    const cacheKey = `${prevDebut}_${prevFin}`;
+    const now = Date.now();
+
+    // Utiliser le cache si disponible
+    if (comparisonCache.key === cacheKey && now - comparisonCache.time < COMPARISON_CACHE_MS) {
+        el.innerHTML = comparisonCache.data;
+        return;
+    }
+
     try {
         const db = window.db || window._db;
         if (!db || !window.currentUser) { el.innerHTML = '<div class="empty-state">Données non disponibles</div>'; return; }
@@ -294,7 +306,7 @@ async function renderComparison() {
         (window.transactionsData || []).forEach(t => { if (t.type === 'expense') curExp += t.amount; else curInc += t.amount; });
         const expDelta = prevExp ? Math.round((curExp - prevExp) / prevExp * 100) : null;
         const incDelta = prevInc ? Math.round((curInc - prevInc) / prevInc * 100) : null;
-        el.innerHTML = `
+        const html = `
             <div class="compare-row">
                 <span class="compare-label">💸 Dépenses</span>
                 <span class="compare-val">${fmt(curExp)} F</span>
@@ -305,6 +317,8 @@ async function renderComparison() {
                 <span class="compare-val">${fmt(curInc)} F</span>
                 ${deltaTag(incDelta, false)}
             </div>`;
+        el.innerHTML = html;
+        comparisonCache = { key: cacheKey, data: html, time: now };
     } catch(e) {
         el.innerHTML = '<div class="empty-state">Impossible de charger la comparaison</div>';
     }
@@ -498,13 +512,16 @@ window.updateBalancesDisplay = function() {
     }
 };
 
+// Override de refreshDashboard — NE PAS rappeler l'original si déjà en cours
 let isNavRefreshing = false;
 
 window.refreshDashboard = async function() {
     if (isNavRefreshing) return;
     isNavRefreshing = true;
     try {
+        // Appeler l'original qui a son propre verrou
         if (window._origRefresh) await window._origRefresh();
+        // Mettre à jour l'UI sans faire de nouveaux appels réseau
         renderAccountCards();
         renderHomeSummary();
         renderRecentTransactions();
@@ -515,7 +532,7 @@ window.refreshDashboard = async function() {
 };
 
 window.updateStats = function() { renderHomeSummary(); };
-window.updateChart = function() {};
+window.updateChart = function() {}; // Le chart est géré par renderStatsTab
 window.updateTransactionsTable = updateTransactionsTable;
 
 window.openTransactionModal = function(mode = 'add', id = null) {
@@ -586,10 +603,8 @@ document.getElementById('logoutBtn')?.addEventListener('click', () => {
     if (window.logout) window.logout();
 });
 
-// Initialisation du badge email
-setTimeout(() => {
-    const badge = document.getElementById('userEmailShort');
-    if (badge && window.currentUser) {
-        badge.textContent = window.currentUser.email.split('@')[0];
-    }
-}, 500);
+// Initialisation du badge email — UNE SEULE FOIS
+const badge = document.getElementById('userEmailShort');
+if (badge && window.currentUser) {
+    badge.textContent = window.currentUser.email.split('@')[0];
+}
