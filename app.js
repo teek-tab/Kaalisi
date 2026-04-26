@@ -1,4 +1,4 @@
-// ==================== CONFIGURATION =====================
+// ==================== CONFIGURATION ====================
 const SUPABASE_URL = 'https://vsvvtyjbdrldlcswujzg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZzdnZ0eWpiZHJsZGxjc3d1anpnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxNDUyNTEsImV4cCI6MjA5MjcyMTI1MX0.YgkmLIoPJi3FQI6LvBVudB76LkMjR2Jywr8SZjNj1no';
 
@@ -20,6 +20,9 @@ let sortColumn = 'date';
 let sortOrder = 'desc';
 
 let conversationMessages = [];
+
+// Stockage des dernières actions exécutées (pour corrections)
+let lastExecutedActions = [];
 
 // ========== CACHE & VERROUS ==========
 let refreshPromise = null;
@@ -48,7 +51,7 @@ async function register() {
     const password = document.getElementById('password').value;
     const { error } = await db.auth.signUp({ email, password });
     if (error) alert(error.message);
-    else alert('Inscription réussie ! Vérifiez votre "email" pour vous connectez.');
+    else alert('Inscription réussie ! Connectez-vous.');
 }
 async function logout() { await db.auth.signOut(); window.location.reload(); }
 
@@ -118,6 +121,7 @@ async function sendMessage() {
                 userId: currentUser.id,
                 periode: currentPeriode,
                 history: [...conversationMessages],
+                recentActions: lastExecutedActions,
                 currentDate: new Date().toISOString().split('T')[0],
                 currentDateTime: new Date().toISOString()
             })
@@ -149,20 +153,47 @@ async function sendMessage() {
     }
 }
 async function executeInstruction(inst) {
+    // Stocker l'action avant exécution (pour correction)
+    const actionSnapshot = {
+        action: inst.action,
+        transaction_id: null,
+        previous_state: null,
+        timestamp: Date.now()
+    };
+    
+    // Pour update_transaction, sauvegarder l'état précédent
+    if (inst.action === 'update_transaction' && inst.transaction_id) {
+        const tx = transactionsData.find(t => t.id === inst.transaction_id);
+        if (tx) {
+            actionSnapshot.previous_state = {
+                amount: tx.amount,
+                description: tx.description,
+                category: tx.categories?.name,
+                account: tx.accounts?.name,
+                date: tx.date
+            };
+        }
+    }
+    
     try {
         switch (inst.action) {
             case 'add_expense':
             case 'add_income':
                 await handleAddTransaction(inst);
+                if (lastCreatedTransactionId) {
+                    actionSnapshot.transaction_id = lastCreatedTransactionId;
+                }
                 break;
             case 'add_to_savings':
                 await handleAddToSavings(inst);
                 break;
             case 'delete_transaction':
                 await handleDeleteTransaction(inst);
+                actionSnapshot.transaction_id = inst.transaction_id;
                 break;
             case 'update_transaction':
                 await handleUpdateTransaction(inst);
+                actionSnapshot.transaction_id = inst.transaction_id;
                 break;
             case 'add_account':
                 await handleAddAccount(inst);
@@ -213,6 +244,11 @@ async function executeInstruction(inst) {
             default:
                 addChatMessage('ai', inst.message || "Je n'ai pas compris.");
         }
+        
+        // Enregistrer l'action réussie
+        lastExecutedActions.unshift(actionSnapshot);
+        if (lastExecutedActions.length > 5) lastExecutedActions.pop();
+        
     } catch (e) {
         console.error(e);
         addChatMessage('ai', "❌ Erreur lors de l'exécution.");
@@ -357,7 +393,6 @@ async function loadUserData(force = false) {
     window.categoriesMap = categoriesMap;
 }
 function updateBalancesDisplay() {
-    // Élément optionnel, peut ne pas exister
     const balancesDiv = document.getElementById('balances');
     if (balancesDiv) {
         balancesDiv.innerHTML = Array.from(accountsMap.values()).map(a => `<span>${getEmoji(a.name)} ${a.name}: ${a.balance} F</span>`).join('');
@@ -452,7 +487,6 @@ function updateStats() {
     let total = 0, income = 0;
     transactionsData.forEach(t => { if (t.type === 'expense') total += t.amount; if (t.type === 'income') income += t.amount; });
     const nbJ = Math.max(1, Math.ceil((new Date(currentPeriode.fin) - new Date(currentPeriode.debut)) / (1000 * 3600 * 24)));
-    // Élément optionnel
     const statsContainer = document.getElementById('statsContainer');
     if (statsContainer) {
         statsContainer.innerHTML = `
