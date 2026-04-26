@@ -3,9 +3,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 
-// ==================== FONCTIONS UTILITAIRES ====================
+// ==================== UTILITAIRES ====================
 async function fetchFromSupabase(table, params) {
-    const url = `${SUPABASE_URL}/rest/v1/${table}?${params}`;
+    const url  = `${SUPABASE_URL}/rest/v1/${table}?${params}`;
     const resp = await fetch(url, {
         headers: {
             'apikey': SUPABASE_SERVICE_KEY,
@@ -25,15 +25,25 @@ async function callDeepSeek(messages, temperature = 0.3) {
         },
         body: JSON.stringify({
             model: 'deepseek-chat',
-            messages: messages,
-            temperature: temperature,
+            messages,
+            temperature,
             max_tokens: 1000
         })
     });
-    
     if (!response.ok) throw new Error(`DeepSeek API error: ${response.status}`);
     const data = await response.json();
     return data.choices[0].message.content.trim();
+}
+
+// FIX : contexte comptes/catégories extrait en une seule fonction partagée
+// Évite la duplication dans handleChat, handleUnderstand, handleExecute
+function buildContext({ accounts = [], categories = [], currentDate = '' } = {}) {
+    return {
+        accountsText:    accounts.map(a => `${a.name}: ${a.balance}F`).join(', '),
+        categoriesList:  categories.map(c => `"${c.name}"`).join(', '),
+        categoriesCtx:   categories.map(c => `${c.icon}${c.name}`).join(', '),
+        currentDate:     currentDate || new Date().toISOString().split('T')[0]
+    };
 }
 
 // ==================== SAUVEGARDE HISTORIQUE ====================
@@ -54,10 +64,10 @@ async function saveChatHistory(userId, userMessage, assistantResponse, action = 
             }),
         });
 
-        const assistantContent = typeof assistantResponse === 'string' 
-            ? assistantResponse 
+        const assistantContent = typeof assistantResponse === 'string'
+            ? assistantResponse
             : (assistantResponse.message || JSON.stringify(assistantResponse));
-        
+
         await fetch(`${SUPABASE_URL}/rest/v1/chat_history`, {
             method: 'POST',
             headers: {
@@ -79,57 +89,53 @@ async function saveChatHistory(userId, userMessage, assistantResponse, action = 
     }
 }
 
-// ==================== FETCH TRANSACTIONS AVEC FILTRES AVANCÉS ====================
+// ==================== FETCH TRANSACTIONS ====================
 async function handleFetchTransactions(userId, periode, filter) {
     let params = `user_id=eq.${userId}&select=*,categories(name,icon),accounts(name)&order=date.desc&limit=100`;
 
-    if (filter.type) params += `&type=eq.${filter.type}`;
-    if (periode?.debut) params += `&date=gte.${periode.debut}`;
-    if (periode?.fin) params += `&date=lte.${periode.fin}`;
+    if (filter.type)      params += `&type=eq.${filter.type}`;
+    if (periode?.debut)   params += `&date=gte.${periode.debut}`;
+    if (periode?.fin)     params += `&date=lte.${periode.fin}`;
     if (filter.amount_gt) params += `&amount=gt.${filter.amount_gt}`;
     if (filter.amount_lt) params += `&amount=lt.${filter.amount_lt}`;
     if (filter.category_id) params += `&category_id=eq.${filter.category_id}`;
-    if (filter.account_id) params += `&account_id=eq.${filter.account_id}`;
+    if (filter.account_id)  params += `&account_id=eq.${filter.account_id}`;
 
     let transactions = await fetchFromSupabase('transactions', params);
-    
-    // Filtres supplémentaires côté client
+
     if (filter.category && !filter.category_id) {
-        transactions = transactions.filter(t => 
+        transactions = transactions.filter(t =>
             t.categories?.name?.toLowerCase().includes(filter.category.toLowerCase())
         );
     }
     if (filter.account && !filter.account_id) {
-        transactions = transactions.filter(t => 
+        transactions = transactions.filter(t =>
             t.accounts?.name?.toLowerCase() === filter.account.toLowerCase()
         );
     }
     if (filter.search) {
-        transactions = transactions.filter(t => 
+        transactions = transactions.filter(t =>
             t.description?.toLowerCase().includes(filter.search.toLowerCase())
         );
     }
 
-    if (transactions.length === 0) {
-        return "Aucune transaction trouvée pour ces critères.";
-    }
+    if (!transactions.length) return "Aucune transaction trouvée pour ces critères.";
 
-    const total = transactions.reduce((s, t) => s + t.amount, 0);
+    const total        = transactions.reduce((s, t) => s + t.amount, 0);
     const expenseTotal = transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-    const incomeTotal = transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-    
+    const incomeTotal  = transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+
     const lines = transactions.slice(0, 20).map(t =>
         `• ${t.date} — ${t.type === 'expense' ? '-' : '+'}${t.amount}F (${t.categories?.name || '?'}) sur ${t.accounts?.name || '?'}${t.description ? ' — ' + t.description.substring(0, 40) : ''}`
     ).join('\n');
 
     const suffix = transactions.length > 20 ? `\n\n... et ${transactions.length - 20} autres.` : '';
-    
     return `${transactions.length} transaction(s) trouvée(s)\n📊 Total: ${total}F (dépenses: ${expenseTotal}F, revenus: ${incomeTotal}F)\n\n${lines}${suffix}`;
 }
 
 async function handleFetchBalance(userId) {
     const accountsList = await fetchFromSupabase('accounts', `user_id=eq.${userId}&select=*`);
-    const total = accountsList.reduce((s, a) => s + (a.balance || 0), 0);
+    const total   = accountsList.reduce((s, a) => s + (a.balance || 0), 0);
     const details = accountsList.map(a => `${a.name}: ${a.balance}F`).join(', ');
     return `💰 Solde total : ${total}F\n(${details})`;
 }
@@ -137,10 +143,11 @@ async function handleFetchBalance(userId) {
 // ==================== CHAT NORMAL (lecture seule) ====================
 async function handleChat(req, res) {
     const { userId, message, history, periode, accounts, categories, transactions, currentDate } = req.body;
-    
-    const accountsCtx = accounts.map(a => `${a.name}: ${a.balance}F`).join(', ');
-    const categoriesCtx = categories.map(c => `${c.icon}${c.name}`).join(', ');
-    const transCtx = transactions.slice(0, 5).map(t =>
+
+    // FIX : buildContext partagé
+    const { accountsText, categoriesCtx } = buildContext({ accounts, categories, currentDate });
+
+    const transCtx = (transactions || []).slice(0, 5).map(t =>
         `[ID:${t.id}] ${t.date} | ${t.type} | ${t.amount}F | ${t.categories?.name || '?'}`
     ).join('\n');
 
@@ -148,7 +155,7 @@ async function handleChat(req, res) {
 
 === CONTEXTE ===
 Date: ${currentDate}
-Comptes: ${accountsCtx}
+Comptes: ${accountsText}
 Catégories: ${categoriesCtx}
 Dernières transactions:
 ${transCtx || 'Aucune'}
@@ -163,37 +170,36 @@ Message: "${message}"`;
 
     const raw = await callDeepSeek([
         { role: 'system', content: systemPrompt },
-        ...history,
+        ...(history || []),
         { role: 'user', content: message }
     ]);
 
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : { action: 'answer', message: raw, requiresConfirmation: false };
-    
+    const result    = jsonMatch ? JSON.parse(jsonMatch[0]) : { action: 'answer', message: raw, requiresConfirmation: false };
+
     if (result.action === 'fetch_transactions') {
-        const messageText = await handleFetchTransactions(userId, periode, result.filter || {});
-        result.action = 'answer';
-        result.message = messageText;
+        result.message = await handleFetchTransactions(userId, periode, result.filter || {});
+        result.action  = 'answer';
         result.requiresConfirmation = false;
     }
-    
     if (result.action === 'fetch_balance') {
         result.message = await handleFetchBalance(userId);
-        result.action = 'answer';
+        result.action  = 'answer';
         result.requiresConfirmation = false;
     }
-    
+
     await saveChatHistory(userId, message, result, result.action);
     res.status(200).json(result);
 }
 
-// ==================== COMPRENDRE (premier appel - actions) ====================
+// ==================== COMPRENDRE (actions) ====================
 async function handleUnderstand(req, res) {
     const { userId, message, recentActions, accounts, categories, currentDate } = req.body;
-    
-    const accountsText = accounts.map(a => `${a.name}: ${a.balance}F`).join(', ');
-    const categoriesList = categories.map(c => `"${c.name}"`).join(', ');
-    const recentActionsText = recentActions.slice(0, 5).map(a => 
+
+    // FIX : buildContext partagé
+    const { accountsText, categoriesList } = buildContext({ accounts, categories, currentDate });
+
+    const recentActionsText = (recentActions || []).slice(0, 5).map(a =>
         `- ${a.action} (ID: ${a.transaction_id?.slice(-8) || 'N/A'}, montant: ${a.amount || '?'}F) à ${new Date(a.timestamp).toLocaleTimeString()}`
     ).join('\n');
 
@@ -266,21 +272,22 @@ Message: "${message}"`;
     const raw = await callDeepSeek([{ role: 'system', content: systemPrompt }]);
 
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : { 
-        action: 'clarify', 
+    const result    = jsonMatch ? JSON.parse(jsonMatch[0]) : {
+        action: 'clarify',
         message: "Je n'ai pas compris. Pouvez-vous reformuler ?",
-        requiresConfirmation: false 
+        requiresConfirmation: false
     };
-    
+
     await saveChatHistory(userId, message, result, result.action);
     res.status(200).json(result);
 }
 
-// ==================== EXÉCUTER (deuxième appel - confirmation) ====================
+// ==================== EXÉCUTER (confirmation) ====================
 async function handleExecute(req, res) {
     const { userId, pendingAction, userResponse, accounts, currentDate } = req.body;
-    
-    const accountsText = accounts.map(a => `${a.name}: ${a.balance}F`).join(', ');
+
+    // FIX : buildContext partagé
+    const { accountsText } = buildContext({ accounts, currentDate });
 
     const systemPrompt = `Tu es Xaalis, EXÉCUTEUR. Traite la réponse de l'utilisateur.
 
@@ -302,8 +309,8 @@ Modification (c'était X/plutôt X):
     const raw = await callDeepSeek([{ role: 'system', content: systemPrompt }]);
 
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : { actionExecuted: null, cancelled: true };
-    
+    const result    = jsonMatch ? JSON.parse(jsonMatch[0]) : { actionExecuted: null, cancelled: true };
+
     res.status(200).json(result);
 }
 
@@ -314,38 +321,26 @@ export default async function handler(req, res) {
         res.setHeader('Access-Control-Allow-Methods', 'POST');
         return res.status(200).end();
     }
-    
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
-    
-    if (!req.body || typeof req.body !== 'object') {
-        return res.status(400).json({ error: 'Body invalide' });
-    }
-    
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-        return res.status(500).json({ error: 'Config Supabase manquante' });
-    }
-    if (!DEEPSEEK_API_KEY) {
-        return res.status(500).json({ error: 'Clé DeepSeek manquante' });
-    }
-    
+
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    if (!req.body || typeof req.body !== 'object') return res.status(400).json({ error: 'Body invalide' });
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return res.status(500).json({ error: 'Config Supabase manquante' });
+    if (!DEEPSEEK_API_KEY) return res.status(500).json({ error: 'Clé DeepSeek manquante' });
+
     const { type } = req.query;
-    
+
     try {
-        if (type === 'understand') {
-            return await handleUnderstand(req, res);
-        }
-        if (type === 'execute') {
-            return await handleExecute(req, res);
-        }
+        if (type === 'understand') return await handleUnderstand(req, res);
+        if (type === 'execute')    return await handleExecute(req, res);
         return await handleChat(req, res);
     } catch (err) {
         console.error('API error:', err);
-        return res.status(500).json({ 
-            action: 'answer', 
+        return res.status(500).json({
+            action: 'answer',
             message: '❌ Erreur serveur. Réessayez.',
-            requiresConfirmation: false 
+            requiresConfirmation: false
         });
     }
 }
