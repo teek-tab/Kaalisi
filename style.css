@@ -43,7 +43,7 @@
     --text: #111827;
     --text2: #6b7280;
     --text3: #9ca3af;
-    
+
     --green: #10b981;
     --green-dim: rgba(16,185,129,0.1);
     --green-glow: rgba(16,185,129,0.2);
@@ -65,7 +65,7 @@ body {
     font-size: 15px;
     line-height: 1.5;
     height: 100%;
-    overflow: hidden;
+    overflow: hidden; /* Empêche le scroll du body, géré par l'app-shell */
     -webkit-font-smoothing: antialiased;
 }
 input, select, button, textarea {
@@ -83,7 +83,8 @@ button { cursor: pointer; border: none; background: none; }
     justify-content: center;
     background: var(--bg);
     padding: 24px;
-    overflow: auto;
+    overflow: auto; /* Scroll si l'écran est trop petit */
+    z-index: 2000;
 }
 .auth-bg-orb {
     position: fixed;
@@ -202,6 +203,10 @@ button { cursor: pointer; border: none; background: none; }
     background: var(--bg);
     max-width: 480px;
     margin: 0 auto;
+    /* CORRECTION: hauteur complète avec padding pour la nav */
+    height: 100vh;
+    height: 100dvh; /* Support dynamic viewport height */
+    overflow: hidden;
 }
 
 /* ==================== TOP BAR ==================== */
@@ -262,17 +267,24 @@ button { cursor: pointer; border: none; background: none; }
 }
 
 /* ==================== TAB CONTENT ==================== */
+/* CORRECTION PRINCIPALE: structure flex pour le défilement */
 .tab-content {
     display: none;
     flex: 1;
-    overflow: hidden;
+    flex-direction: column;
+    overflow: hidden; /* Le conteneur ne défile pas, c'est page-scroll qui défile */
+    min-height: 0; /* Important pour flex */
 }
-.tab-content.active { display: flex; flex-direction: column; }
+.tab-content.active {
+    display: flex;
+}
 .page-scroll {
     flex: 1;
     overflow-y: auto;
-    padding: 16px 16px calc(var(--nav-h) + 16px);
+    overflow-x: hidden;
+    padding: 16px 16px calc(var(--nav-h) + 24px) 16px; /* Espace pour la nav + marge */
     -webkit-overflow-scrolling: touch;
+    min-height: 0; /* Important pour flex */
 }
 .page-scroll::-webkit-scrollbar { display: none; }
 
@@ -1048,6 +1060,7 @@ button { cursor: pointer; border: none; background: none; }
 @media (min-width: 768px) {
     body {
         background: #0a0c10;
+        overflow: auto; /* CORRECTION: permet le scroll sur desktop si nécessaire */
     }
     .app-shell {
         max-width: none;
@@ -1056,6 +1069,10 @@ button { cursor: pointer; border: none; background: none; }
         left: auto;
         transform: none;
         flex-direction: row;
+        position: relative; /* CORRECTION: plus fixed, permet le scroll naturel */
+        height: auto;
+        min-height: 100vh;
+        overflow: visible;
     }
     .bottom-nav {
         position: relative;
@@ -1070,6 +1087,8 @@ button { cursor: pointer; border: none; background: none; }
         border-right: 1px solid var(--border);
         padding-top: 68px;
         background: var(--bg2);
+        flex-shrink: 0;
+        width: 200px;
     }
     .nav-btn {
         flex-direction: row;
@@ -1093,10 +1112,19 @@ button { cursor: pointer; border: none; background: none; }
     }
     .tab-content {
         flex: 1;
-        overflow-y: auto;
+        overflow-y: auto; /* CORRECTION: scroll sur le tab-content en desktop */
+        display: none;
+    }
+    .tab-content.active {
+        display: block; /* CORRECTION: block au lieu de flex */
     }
     .page-scroll {
         padding-bottom: 24px;
+        overflow-y: visible; /* CORRECTION: pas besoin de scroll ici, c'est tab-content qui scroll */
+    }
+    .top-bar {
+        position: sticky;
+        top: 0;
     }
     .summary-grid {
         grid-template-columns: repeat(4, 1fr);
