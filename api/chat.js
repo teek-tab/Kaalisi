@@ -57,7 +57,7 @@ export default async function handler(req, res) {
             `[ID:${t.id}] ${t.date} | ${t.type} | ${t.amount}F | ${t.categories?.name || '?'} | ${t.accounts?.name || '?'} | "${(t.description || '').substring(0, 30)}"`
         ).join('\n');
 
-        const systemPrompt = `Tu es Kaalisi, un assistant financier intelligent, naturel et conversationnel.
+        const systemPrompt = `Tu es Xaalis, un assistant financier intelligent, naturel et conversationnel.
 
 === CONTEXTE FINANCIER ===
 Période analysée: ${periode?.debut || '?'} au ${periode?.fin || '?'}
