@@ -31,8 +31,9 @@ const authScreen = document.getElementById('authScreen');
 const dashboard = document.getElementById('dashboardScreen');
 const chatMessages = document.getElementById('chatMessages');
 const userInput = document.getElementById('userInput');
+let expensesChart = null;
 
-// Variables globales pour Chart (utilisées par nav.js)
+// ==================== VARIABLES GLOBALES POUR COMPATIBILITÉ NAV.JS (AJOUT) ====================
 window.balanceChartInstance = null;
 window.expensesChartInstance = null;
 
@@ -99,10 +100,10 @@ function getActionDescription(inst) {
         case 'add_expense': return `Ajouter ${inst.amount}F pour ${inst.description || inst.category || '?'} (${inst.category || 'Autres'}) sur ${inst.account || 'cash'}`;
         case 'add_income': return `Ajouter ${inst.amount}F de revenu (${inst.category || 'Autres'}) sur ${inst.account || 'cash'}`;
         case 'add_to_savings': return `Transférer ${inst.amount}F vers l'épargne depuis ${inst.source || 'cash'}`;
-        case 'delete_transaction': return `Supprimer la transaction`;
+        case 'delete_transaction': return `Supprimer la transaction${inst.transaction_id ? ` #${inst.transaction_id.slice(-4)}` : ''}`;
         case 'delete_query': return `Supprimer ${inst.query?.filter?.category ? `les ${inst.query.filter.category}` : 'les transactions'} du ${inst.query?.filter?.date || '?'}`;
-        case 'update_transaction': return `Modifier la transaction`;
-        case 'update_query': return `Modifier ${inst.query?.filter?.category ? `les ${inst.query.filter.category}` : 'les transactions'} du ${inst.query?.filter?.date || '?'}`;
+        case 'update_transaction': return `Modifier la transaction${inst.transaction_id ? ` #${inst.transaction_id.slice(-4)}` : ''}`;
+        case 'update_query': return `Re-catégoriser les transactions du ${inst.query?.filter?.date || '?'} en "${inst.query?.update?.category || '?'}"`;
         default: return inst.action || 'Action';
     }
 }
@@ -275,6 +276,7 @@ async function handleConfirmationResponse(response) {
 
 // ==================== EXÉCUTION DB ====================
 async function executeRealAction(action) {
+    // Actions multiples
     if (Array.isArray(action)) {
         for (const singleAction of action) {
             await executeRealAction(singleAction);
@@ -292,13 +294,13 @@ async function executeRealAction(action) {
         case 'delete_transaction':
             await handleDeleteTransaction(action);
             break;
-        case 'delete_query':
+        case 'delete_query':                    // ✅ AJOUT
             await handleDeleteQuery(action);
             break;
         case 'update_transaction':
             await handleUpdateTransaction(action);
             break;
-        case 'update_query':
+        case 'update_query':                    // ✅ AJOUT
             await handleUpdateQuery(action);
             break;
         case 'add_to_savings':
@@ -377,6 +379,8 @@ async function handleDeleteTransaction(inst) {
     await db.from('transactions').delete().eq('id', transId).eq('user_id', currentUser.id);
 }
 
+// ==================== NOUVELLES FONCTIONS POUR DELETE_QUERY ET UPDATE_QUERY (AJOUT) ====================
+
 async function handleDeleteQuery(action) {
     const { query } = action;
     const filter = query.filter;
@@ -402,6 +406,7 @@ async function handleDeleteQuery(action) {
         throw new Error('Aucune transaction trouvée');
     }
     
+    // Restaurer les soldes
     for (const t of transactions) {
         const acc = accountsMap.get(t.account_id);
         if (acc) {
@@ -414,6 +419,7 @@ async function handleDeleteQuery(action) {
         }
     }
     
+    // Supprimer
     let deleteQuery = db.from('transactions').delete().eq('user_id', currentUser.id);
     if (filter.date) deleteQuery = deleteQuery.eq('date', filter.date);
     if (filter.type) deleteQuery = deleteQuery.eq('type', filter.type);
@@ -434,34 +440,6 @@ async function handleDeleteQuery(action) {
     updateBalancesDisplay();
     await refreshDashboard();
     addChatMessage('ai', `✅ ${transactions.length} transaction(s) supprimée(s).`);
-}
-
-async function handleUpdateTransaction(inst) {
-    const transId = inst.transaction_id;
-    const { data: t } = await db.from('transactions')
-        .select('*')
-        .eq('id', transId)
-        .eq('user_id', currentUser.id)
-        .single();
-    
-    if (!t) throw new Error('Transaction introuvable');
-    
-    const fields = inst.fields_to_update || {};
-    const updates = {};
-    if (fields.amount !== undefined) updates.amount = fields.amount;
-    if (fields.description !== undefined) updates.description = fields.description;
-    if (fields.date !== undefined) updates.date = fields.date;
-    
-    await db.from('transactions').update(updates).eq('id', transId);
-    
-    const acc = accountsMap.get(t.account_id);
-    if (acc && fields.amount !== undefined) {
-        const oldAmount = t.amount;
-        const delta = t.type === 'income' ? fields.amount - oldAmount : oldAmount - fields.amount;
-        acc.balance += delta;
-        await db.from('accounts').update({ balance: acc.balance }).eq('id', t.account_id);
-        updateBalancesDisplay();
-    }
 }
 
 async function handleUpdateQuery(action) {
@@ -490,6 +468,7 @@ async function handleUpdateQuery(action) {
         throw new Error('Aucune transaction trouvée');
     }
     
+    // Appliquer la mise à jour
     if (update.category) {
         let newCatId = null;
         for (let [id, cat] of categoriesMap) {
@@ -501,6 +480,7 @@ async function handleUpdateQuery(action) {
         if (!newCatId) {
             const { data } = await db.from('categories').insert({ user_id: currentUser.id, name: update.category, icon: '📌' }).select();
             if (data?.[0]) newCatId = data[0].id;
+            if (newCatId) categoriesMap.set(newCatId, data[0]);
         }
         
         if (newCatId) {
@@ -513,6 +493,34 @@ async function handleUpdateQuery(action) {
     
     await refreshDashboard();
     addChatMessage('ai', `✅ ${transactions.length} transaction(s) modifiée(s).`);
+}
+
+async function handleUpdateTransaction(inst) {
+    const transId = inst.transaction_id;
+    const { data: t } = await db.from('transactions')
+        .select('*')
+        .eq('id', transId)
+        .eq('user_id', currentUser.id)
+        .single();
+    
+    if (!t) throw new Error('Transaction introuvable');
+    
+    const fields = inst.fields_to_update || {};
+    const updates = {};
+    if (fields.amount !== undefined) updates.amount = fields.amount;
+    if (fields.description !== undefined) updates.description = fields.description;
+    if (fields.date !== undefined) updates.date = fields.date;
+    
+    await db.from('transactions').update(updates).eq('id', transId);
+    
+    const acc = accountsMap.get(t.account_id);
+    if (acc && fields.amount !== undefined) {
+        const oldAmount = t.amount;
+        const delta = t.type === 'income' ? fields.amount - oldAmount : oldAmount - fields.amount;
+        acc.balance += delta;
+        await db.from('accounts').update({ balance: acc.balance }).eq('id', t.account_id);
+        updateBalancesDisplay();
+    }
 }
 
 async function handleAddToSavings(inst) {
@@ -599,8 +607,12 @@ async function refreshDashboard() {
             renderHomeSummary();
             renderRecentTransactions();
             updateTransactionsTable();
-            if (document.getElementById('tab-stats')?.classList.contains('active')) renderStatsTab();
-            if (document.getElementById('tab-settings')?.classList.contains('active')) renderSettingsTab();
+            if (document.getElementById('tab-stats')?.classList.contains('active')) {
+                renderStatsTab();
+            }
+            if (document.getElementById('tab-settings')?.classList.contains('active')) {
+                renderSettingsTab();
+            }
         } catch (err) {
             console.error('[REFRESH] Erreur:', err);
         }
@@ -658,17 +670,14 @@ function renderHomeSummary() {
     const nbJ = Math.max(1, Math.ceil((new Date(currentPeriode.fin) - new Date(currentPeriode.debut)) / 86400000));
     const avg = expense / nbJ;
     
-    const homeExpense = document.getElementById('homeExpense');
-    const homeIncome = document.getElementById('homeIncome');
-    if (homeExpense) homeExpense.textContent = fmt(expense) + ' F';
-    if (homeIncome) homeIncome.textContent = fmt(income) + ' F';
+    setEl('homeExpense', expense);
+    setEl('homeIncome', income);
     const netEl = document.getElementById('homeNet');
     if (netEl) {
         netEl.textContent = (net >= 0 ? '+' : '') + fmt(net);
         netEl.style.color = net >= 0 ? 'var(--green)' : 'var(--red)';
     }
-    const homeAvg = document.getElementById('homeAvg');
-    if (homeAvg) homeAvg.textContent = fmt(avg) + ' F';
+    setEl('homeAvg', avg);
 }
 
 function renderRecentTransactions() {
@@ -757,6 +766,9 @@ window.changePage = (delta) => {
 };
 
 // ==================== ONGLET STATS ====================
+let balanceChartInstance = null;
+let expensesChartInstance = null;
+
 function renderStatsTab() {
     renderStatsKPIs();
     renderDonutChart();
@@ -791,9 +803,9 @@ function renderDonutChart() {
             totals.set(n, (totals.get(n) || 0) + t.amount);
         }
     });
-    if (window.expensesChartInstance) window.expensesChartInstance.destroy();
+    if (expensesChartInstance) expensesChartInstance.destroy();
     if (!totals.size) return;
-    window.expensesChartInstance = new Chart(ctx, {
+    expensesChartInstance = new Chart(ctx, {
         type: 'doughnut',
         data: {
             labels: [...totals.keys()],
@@ -817,8 +829,8 @@ function renderBalanceCurve() {
     const dates = [...byDate.keys()].sort();
     let running = 0;
     const values = dates.map(d => { running += byDate.get(d); return running; });
-    if (window.balanceChartInstance) window.balanceChartInstance.destroy();
-    window.balanceChartInstance = new Chart(ctx, {
+    if (balanceChartInstance) balanceChartInstance.destroy();
+    balanceChartInstance = new Chart(ctx, {
         type: 'line',
         data: {
             labels: dates.map(d => d.slice(5)),
@@ -967,6 +979,7 @@ window.deleteCategorySettings = async (id) => {
 
 // ==================== HELPERS ====================
 function fmt(n) { return Math.round(n).toLocaleString('fr'); }
+function setEl(id, val) { const el = document.getElementById(id); if (el) el.textContent = fmt(val) + ' F'; }
 
 function openModal(id) { const m = document.getElementById(id); if (m) m.classList.add('open'); }
 window.closeModal = function(id) { const m = document.getElementById(id); if (m) m.classList.remove('open'); };
@@ -999,7 +1012,7 @@ function exportCSV() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `xaalis_export_${new Date().toISOString().slice(0,10)}.csv`;
+    link.download = `kaalisi_export_${new Date().toISOString().slice(0,10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
 }
@@ -1081,7 +1094,7 @@ window.deleteTransaction = async function(id) {
 
 window.editTransaction = function(id) { window.openTransactionModal('edit', id); };
 
-// ==================== SWITCH TAB ====================
+// ==================== SWITCH TAB & OVERRIDES ====================
 window.switchTab = function(tabName) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
