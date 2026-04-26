@@ -12,17 +12,12 @@ let categoriesMap = new Map();
 let accountsMap = new Map();
 let transactionsData = [];
 let lastCreatedTransactionId = null;
-
-let currentPage = 1;
-const rowsPerPage = 10;
-let filterType = 'all';
-let sortColumn = 'date';
-let sortOrder = 'desc';
-
 let conversationMessages = [];
-
-// Stockage des dernières actions exécutées (pour corrections)
 let lastExecutedActions = [];
+
+// ========== GESTION CONFIRMATION ==========
+let pendingAction = null;
+let waitingForConfirmation = false;
 
 // ========== CACHE & VERROUS ==========
 let refreshPromise = null;
@@ -46,6 +41,7 @@ async function login() {
     if (error) alert('Erreur: ' + error.message);
     else checkAuth();
 }
+
 async function register() {
     const email = document.getElementById('email').value;
     const password = document.getElementById('password').value;
@@ -53,6 +49,7 @@ async function register() {
     if (error) alert(error.message);
     else alert('Inscription réussie ! Connectez-vous.');
 }
+
 async function logout() { await db.auth.signOut(); window.location.reload(); }
 
 async function checkAuth() {
@@ -62,19 +59,17 @@ async function checkAuth() {
         window.currentUser = currentUser;
         authScreen.style.display = 'none';
         dashboard.style.display = 'block';
-        const userEmailSpan = document.getElementById('userEmail');
-        if (userEmailSpan) userEmailSpan.textContent = currentUser.email;
         await loadUserData(true);
         await loadPeriod('month');
         resetConversation();
-        addChatMessage('system', '🟢 Connecté ! Parlez naturellement.');
+        addChatMessage('system', '🟢 Connecté ! Je demande confirmation avant chaque action.');
     } else {
         authScreen.style.display = 'flex';
         dashboard.style.display = 'none';
     }
 }
 
-// ==================== CONVERSATION ====================
+// ==================== AFFICHAGE ====================
 function addChatMessage(sender, text) {
     const div = document.createElement('div');
     div.className = sender === 'user' ? 'user-msg' : (sender === 'ai' ? 'ai-msg' : 'system-msg');
@@ -82,178 +77,248 @@ function addChatMessage(sender, text) {
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
+
 function resetConversation() {
     conversationMessages = [];
+    pendingAction = null;
+    waitingForConfirmation = false;
     chatMessages.innerHTML = '';
-    addChatMessage('system', '🔄 Nouvelle conversation. Prêt à vous aider.');
+    addChatMessage('system', '🔄 Nouvelle conversation. Je demande confirmation avant chaque action.');
 }
+
 function getActionDescription(inst) {
+    // Gestion des actions multiples (tableau)
+    if (Array.isArray(inst)) {
+        if (inst.length === 0) return "Aucune action";
+        if (inst.length === 1) return getActionDescription(inst[0]);
+        return `${inst.length} actions :\n${inst.map((a, i) => `  ${i+1}. ${getActionDescription(a)}`).join('\n')}`;
+    }
+    // Actions uniques
     switch (inst.action) {
-        case 'add_expense': return `Dépense ajoutée : ${inst.amount}F (${inst.category || 'Autres'}) sur ${inst.account}`;
-        case 'add_income': return `Revenu ajouté : ${inst.amount}F (${inst.category || 'Autres'}) sur ${inst.account}`;
-        case 'add_to_savings': return `${inst.amount}F transférés vers l'épargne depuis ${inst.source || 'cash'}`;
-        case 'delete_transaction': return `Transaction supprimée`;
-        case 'update_transaction': return `Transaction modifiée`;
-        case 'fetch_balance': return `Solde total consulté`;
-        case 'query': return `Analyse effectuée : ${inst.type || ''}`;
-        default: return inst.message || '';
+        case 'add_expense': return `Ajouter ${inst.amount}F pour ${inst.description || inst.category || '?'} (${inst.category || 'Autres'}) sur ${inst.account || 'cash'}`;
+        case 'add_income': return `Ajouter ${inst.amount}F de revenu (${inst.category || 'Autres'}) sur ${inst.account || 'cash'}`;
+        case 'add_to_savings': return `Transférer ${inst.amount}F vers l'épargne depuis ${inst.source || 'cash'}`;
+        case 'delete_transaction': return `Supprimer la transaction${inst.transaction_id ? ` #${inst.transaction_id.slice(-4)}` : ''}`;
+        case 'update_transaction': return `Modifier la transaction${inst.transaction_id ? ` #${inst.transaction_id.slice(-4)}` : ''}`;
+        case 'update_account': return `Renommer le compte "${inst.old_name}" en "${inst.new_name}"`;
+        default: return inst.action || 'Action';
     }
 }
+
+// ==================== MESSAGERIE ====================
 async function sendMessage() {
     const message = userInput.value.trim();
     if (!message) return;
 
     addChatMessage('user', message);
     userInput.value = '';
+
+    // Si on attend une confirmation, c'est une réponse
+    if (waitingForConfirmation && pendingAction) {
+        await handleConfirmationResponse(message);
+        return;
+    }
+
     conversationMessages.push({ role: 'user', content: message });
 
     const tempDiv = document.createElement('div');
     tempDiv.className = 'ai-msg';
-    tempDiv.textContent = '⏳ ...';
+    tempDiv.textContent = '🤔 Analyse...';
     chatMessages.appendChild(tempDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
     try {
-        const res = await fetch('/api/chat', {
+        // Déterminer le type d'appel
+        const isWriteAction = message.match(/\b(ajoute|ajouter|dépense|dépenser|revenu|supprime|supprimer|modifie|modifier|transfert|épargne)\b/i);
+        
+        let response;
+        if (isWriteAction) {
+            // Appel à understand
+            const res = await fetch('/api/chat?type=understand', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: currentUser.id,
+                    message: message,
+                    recentActions: lastExecutedActions,
+                    accounts: Array.from(accountsMap.values()),
+                    categories: Array.from(categoriesMap.values()),
+                    currentDate: new Date().toISOString().split('T')[0]
+                })
+            });
+            response = await res.json();
+        } else {
+            // Appel normal (lecture seule)
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: currentUser.id,
+                    message: message,
+                    history: conversationMessages.slice(0, -1),
+                    periode: currentPeriode,
+                    accounts: Array.from(accountsMap.values()),
+                    categories: Array.from(categoriesMap.values()),
+                    transactions: transactionsData,
+                    currentDate: new Date().toISOString().split('T')[0]
+                })
+            });
+            response = await res.json();
+        }
+        
+        tempDiv.remove();
+
+        // ✅ Gérer les actions multiples (tableau)
+        if (response.actions && Array.isArray(response.actions)) {
+            pendingAction = response.actions;
+            waitingForConfirmation = true;
+            const confirmMsg = response.confirmationMessage || `💰 Confirmer ${response.actions.length} actions ? (oui/non/modifier)`;
+            addChatMessage('ai', confirmMsg);
+            conversationMessages.push({ role: 'assistant', content: confirmMsg });
+            return;
+        }
+        
+        // Gérer une action unique avec confirmation
+        if (response.requiresConfirmation === true && response.action) {
+            pendingAction = response;
+            waitingForConfirmation = true;
+            const confirmMsg = response.confirmationMessage || `💰 Confirmer : ${getActionDescription(response)} ? (oui/non/modifier)`;
+            addChatMessage('ai', confirmMsg);
+            conversationMessages.push({ role: 'assistant', content: confirmMsg });
+            return;
+        }
+        
+        // Gérer les réponses sans confirmation (lecture seule)
+        if (response.action === 'answer' && response.message) {
+            addChatMessage('ai', response.message);
+            conversationMessages.push({ role: 'assistant', content: response.message });
+        } else if (response.action === 'clarify') {
+            addChatMessage('ai', response.message);
+            conversationMessages.push({ role: 'assistant', content: response.message });
+        } else {
+            addChatMessage('ai', response.message || 'Action effectuée.');
+            conversationMessages.push({ role: 'assistant', content: response.message || 'Action effectuée.' });
+        }
+
+    } catch (err) {
+        tempDiv.remove();
+        addChatMessage('ai', '❌ Erreur de connexion. Réessayez.');
+        console.error(err);
+    }
+}
+
+async function handleConfirmationResponse(response) {
+    const tempDiv = document.createElement('div');
+    tempDiv.className = 'ai-msg';
+    tempDiv.textContent = '⏳ Traitement...';
+    chatMessages.appendChild(tempDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    try {
+        const res = await fetch('/api/chat?type=execute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 userId: currentUser.id,
-                periode: currentPeriode,
-                history: [...conversationMessages],
-                recentActions: lastExecutedActions,
-                currentDate: new Date().toISOString().split('T')[0],
-                currentDateTime: new Date().toISOString()
+                pendingAction: pendingAction,
+                userResponse: response,
+                accounts: Array.from(accountsMap.values()),
+                currentDate: new Date().toISOString().split('T')[0]
             })
         });
 
         const result = await res.json();
         tempDiv.remove();
 
-        let aiText = '';
-
-        if (result.action && result.action !== 'answer' && result.action !== 'clarify') {
-            await executeInstruction(result);
-            aiText = result.message || getActionDescription(result);
+        if (result.actionExecuted) {
+            // Exécuter l'action (unique ou tableau)
+            await executeRealAction(result.actionExecuted);
+            
+            // Stocker dans historique (pour une action unique, sinon on stocke la première?)
+            if (!Array.isArray(result.actionExecuted)) {
+                lastExecutedActions.unshift({
+                    action: result.actionExecuted.action,
+                    transaction_id: lastCreatedTransactionId,
+                    timestamp: Date.now()
+                });
+                if (lastExecutedActions.length > 5) lastExecutedActions.pop();
+            }
+            
             await refreshDashboard();
+            addChatMessage('ai', result.successMessage || '✅ Action exécutée avec succès.');
+            conversationMessages.push({ role: 'assistant', content: result.successMessage || '✅ Action exécutée.' });
+            waitingForConfirmation = false;
+            pendingAction = null;
+            
+        } else if (result.updatedAction) {
+            // Modification de l'action
+            pendingAction = result.updatedAction;
+            addChatMessage('ai', result.newConfirmationMessage);
+            conversationMessages.push({ role: 'assistant', content: result.newConfirmationMessage });
+            
+        } else if (result.cancelled) {
+            addChatMessage('ai', '❌ Action annulée.');
+            conversationMessages.push({ role: 'assistant', content: 'Action annulée.' });
+            waitingForConfirmation = false;
+            pendingAction = null;
+            
         } else {
-            aiText = result.message || '';
-            addChatMessage('ai', aiText);
+            addChatMessage('ai', result.message || 'Action traitée.');
+            waitingForConfirmation = false;
+            pendingAction = null;
         }
-
-        if (aiText) {
-            conversationMessages.push({ role: 'assistant', content: aiText });
-        }
-
+        
     } catch (err) {
         tempDiv.remove();
-        addChatMessage('ai', '❌ Erreur de connexion.');
-        conversationMessages.pop();
+        addChatMessage('ai', '❌ Erreur lors de l\'exécution.');
         console.error(err);
+        waitingForConfirmation = false;
+        pendingAction = null;
     }
 }
-async function executeInstruction(inst) {
-    // Stocker l'action avant exécution (pour correction)
-    const actionSnapshot = {
-        action: inst.action,
-        transaction_id: null,
-        previous_state: null,
-        timestamp: Date.now()
-    };
-    
-    // Pour update_transaction, sauvegarder l'état précédent
-    if (inst.action === 'update_transaction' && inst.transaction_id) {
-        const tx = transactionsData.find(t => t.id === inst.transaction_id);
-        if (tx) {
-            actionSnapshot.previous_state = {
-                amount: tx.amount,
-                description: tx.description,
-                category: tx.categories?.name,
-                account: tx.accounts?.name,
-                date: tx.date
-            };
-        }
-    }
-    
-    try {
-        switch (inst.action) {
-            case 'add_expense':
-            case 'add_income':
-                await handleAddTransaction(inst);
-                if (lastCreatedTransactionId) {
-                    actionSnapshot.transaction_id = lastCreatedTransactionId;
-                }
-                break;
-            case 'add_to_savings':
-                await handleAddToSavings(inst);
-                break;
-            case 'delete_transaction':
-                await handleDeleteTransaction(inst);
-                actionSnapshot.transaction_id = inst.transaction_id;
-                break;
-            case 'update_transaction':
-                await handleUpdateTransaction(inst);
-                actionSnapshot.transaction_id = inst.transaction_id;
-                break;
-            case 'add_account':
-                await handleAddAccount(inst);
-                break;
-            case 'update_account':
-                await handleUpdateAccount(inst);
-                break;
-            case 'fetch_balance': {
-                let total = 0;
-                for (let acc of accountsMap.values()) total += acc.balance;
-                addChatMessage('ai', `💰 Solde total : ${total} F`);
-                break;
+
+// ==================== EXÉCUTION DB (avec gestion tableau) ====================
+async function executeRealAction(action) {
+    // ✅ Gestion des actions multiples (tableau)
+    if (Array.isArray(action)) {
+        console.log(`📋 Exécution de ${action.length} actions multiples...`);
+        for (const singleAction of action) {
+            try {
+                await executeRealAction(singleAction);
+            } catch (err) {
+                console.error(`❌ Erreur sur une action multiple:`, err);
+                throw new Error(`Erreur sur une action : ${err.message}`);
             }
-            case 'query':
-                if (inst.type === 'total') {
-                    const tot = transactionsData.reduce((s, t) => t.type === 'expense' ? s + t.amount : s, 0);
-                    addChatMessage('ai', `📊 Total dépenses : ${tot} F`);
-                } else if (inst.type === 'forecast') {
-                    const today = new Date();
-                    const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
-                    const daysPassed = today.getDate();
-                    const spent = transactionsData.reduce((s, t) => t.type === 'expense' ? s + t.amount : s, 0);
-                    const avg = spent / (daysPassed || 1);
-                    const forecast = avg * (daysInMonth - daysPassed);
-                    addChatMessage('ai', `📈 Prévision fin de mois : ~${Math.round(forecast)} F supplémentaires`);
-                } else if (inst.type === 'best_days') {
-                    const dayMap = new Map();
-                    transactionsData.forEach(t => {
-                        if (t.type === 'expense') {
-                            const d = new Date(t.date).getDay();
-                            dayMap.set(d, (dayMap.get(d) || 0) + t.amount);
-                        }
-                    });
-                    let best = null, min = Infinity;
-                    for (let [d, v] of dayMap) if (v < min) { min = v; best = d; }
-                    const days = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
-                    addChatMessage('ai', best !== null ? `🔥 Moins de dépenses le ${days[best]} (${min}F)` : "Pas assez de données");
-                } else {
-                    addChatMessage('ai', inst.message || 'Analyse effectuée.');
-                }
-                break;
-            case 'clarify':
-                addChatMessage('ai', inst.message || 'Pouvez-vous préciser ?');
-                break;
-            case 'answer':
-                addChatMessage('ai', inst.message || '');
-                break;
-            default:
-                addChatMessage('ai', inst.message || "Je n'ai pas compris.");
         }
-        
-        // Enregistrer l'action réussie
-        lastExecutedActions.unshift(actionSnapshot);
-        if (lastExecutedActions.length > 5) lastExecutedActions.pop();
-        
-    } catch (e) {
-        console.error(e);
-        addChatMessage('ai', "❌ Erreur lors de l'exécution.");
+        console.log(`✅ ${action.length} actions exécutées avec succès`);
+        return;
+    }
+    
+    // Action unique
+    console.log(`🎯 Exécution action unique: ${action.action}`);
+    switch (action.action) {
+        case 'add_expense':
+        case 'add_income':
+            await handleAddTransaction(action);
+            break;
+        case 'delete_transaction':
+            await handleDeleteTransaction(action);
+            break;
+        case 'update_transaction':
+            await handleUpdateTransaction(action);
+            break;
+        case 'add_to_savings':
+            await handleAddToSavings(action);
+            break;
+        case 'update_account':
+            await handleUpdateAccount(action);
+            break;
+        default:
+            console.warn('⚠️ Action non gérée:', action.action);
+            throw new Error(`Action non supportée: ${action.action}`);
     }
 }
+
 async function handleAddTransaction(inst) {
     let catId = null;
     for (let [id, cat] of categoriesMap) if (cat.name.toLowerCase() === (inst.category || '').toLowerCase()) { catId = id; break; }
@@ -263,7 +328,8 @@ async function handleAddTransaction(inst) {
     }
     let accId = null;
     for (let [id, acc] of accountsMap) if (acc.name === inst.account) { accId = id; break; }
-    if (!accId) { addChatMessage('ai', `❌ Compte "${inst.account}" introuvable.`); return; }
+    if (!accId) throw new Error(`Compte "${inst.account}" introuvable`);
+    
     const isIncome = inst.action === 'add_income';
     const { data, error } = await db.from('transactions').insert({
         user_id: currentUser.id,
@@ -274,6 +340,7 @@ async function handleAddTransaction(inst) {
         type: isIncome ? 'income' : 'expense',
         date: inst.date || new Date().toISOString().slice(0, 10)
     }).select();
+    
     if (!error && data?.[0]) {
         lastCreatedTransactionId = data[0].id;
         const acc = accountsMap.get(accId);
@@ -281,29 +348,16 @@ async function handleAddTransaction(inst) {
         await db.from('accounts').update({ balance: newBalance }).eq('id', accId);
         acc.balance = newBalance;
         updateBalancesDisplay();
-        addChatMessage('ai', `${isIncome ? '💰 Revenu' : '💸 Dépense'} ajouté : ${inst.amount} F (${inst.category || 'Autres'}) sur ${inst.account}`);
-    } else { addChatMessage('ai', '❌ Erreur ajout.'); }
+    } else {
+        throw new Error('Erreur ajout transaction');
+    }
 }
-async function handleAddToSavings(inst) {
-    const src = inst.source || 'cash';
-    let srcId = null, epId = null;
-    for (let [id, a] of accountsMap) { if (a.name === src) srcId = id; if (a.name === 'epargne') epId = id; }
-    if (!srcId || !epId) { addChatMessage('ai', '❌ Compte introuvable.'); return; }
-    const srcAcc = accountsMap.get(srcId);
-    const epAcc = accountsMap.get(epId);
-    if (srcAcc.balance < inst.amount) { addChatMessage('ai', `❌ Solde ${src} insuffisant`); return; }
-    await db.from('accounts').update({ balance: srcAcc.balance - inst.amount }).eq('id', srcId);
-    await db.from('accounts').update({ balance: epAcc.balance + inst.amount }).eq('id', epId);
-    srcAcc.balance -= inst.amount;
-    epAcc.balance += inst.amount;
-    updateBalancesDisplay();
-    addChatMessage('ai', `💰 ${inst.amount}F transférés de ${src} vers épargne`);
-}
+
 async function handleDeleteTransaction(inst) {
-    const transId = inst.transaction_id || lastCreatedTransactionId;
-    if (!transId) { addChatMessage('ai', '❌ Aucune transaction à supprimer.'); return; }
+    const transId = inst.transaction_id;
     const { data: t } = await db.from('transactions').select('*').eq('id', transId).eq('user_id', currentUser.id).single();
-    if (!t) { addChatMessage('ai', '❌ Transaction introuvable.'); return; }
+    if (!t) throw new Error('Transaction introuvable');
+    
     const acc = accountsMap.get(t.account_id);
     if (acc) {
         const newBal = t.type === 'income' ? acc.balance - t.amount : acc.balance + t.amount;
@@ -312,79 +366,80 @@ async function handleDeleteTransaction(inst) {
         updateBalancesDisplay();
     }
     await db.from('transactions').delete().eq('id', transId).eq('user_id', currentUser.id);
-    addChatMessage('ai', `🗑️ Transaction supprimée (${t.amount}F)`);
 }
+
 async function handleUpdateTransaction(inst) {
-    const transId = inst.transaction_id || lastCreatedTransactionId;
-    if (!transId) { addChatMessage('ai', '❌ Aucune transaction à modifier.'); return; }
+    const transId = inst.transaction_id;
     const { data: t } = await db.from('transactions').select('*').eq('id', transId).eq('user_id', currentUser.id).single();
-    if (!t) { addChatMessage('ai', '❌ Transaction introuvable.'); return; }
-    const oldAcc = accountsMap.get(t.account_id);
-    if (oldAcc) {
-        const oldBal = t.type === 'income' ? oldAcc.balance - t.amount : oldAcc.balance + t.amount;
-        await db.from('accounts').update({ balance: oldBal }).eq('id', t.account_id);
-        oldAcc.balance = oldBal;
-    }
+    if (!t) throw new Error('Transaction introuvable');
+    
     const fields = inst.fields_to_update || {};
     const updates = {};
     if (fields.amount !== undefined) updates.amount = fields.amount;
     if (fields.description !== undefined) updates.description = fields.description;
     if (fields.date !== undefined) updates.date = fields.date;
-    let newAccId = t.account_id;
-    if (fields.account) {
-        for (let [id, a] of accountsMap) if (a.name === fields.account) { newAccId = id; break; }
-        updates.account_id = newAccId;
-    }
-    if (fields.category) {
-        let catId = null;
-        for (let [id, c] of categoriesMap) if (c.name.toLowerCase() === fields.category.toLowerCase()) { catId = id; break; }
-        if (!catId) {
-            const { data } = await db.from('categories').insert({ user_id: currentUser.id, name: fields.category, icon: '📌' }).select();
-            if (data?.[0]) { catId = data[0].id; categoriesMap.set(catId, data[0]); }
-        }
-        if (catId) updates.category_id = catId;
-    }
+    
     await db.from('transactions').update(updates).eq('id', transId);
-    const newAcc = accountsMap.get(newAccId);
-    const newAmount = updates.amount !== undefined ? updates.amount : t.amount;
-    if (newAcc) {
-        const delta = t.type === 'income' ? newAmount : -newAmount;
-        await db.from('accounts').update({ balance: newAcc.balance + delta }).eq('id', newAccId);
-        newAcc.balance += delta;
+    
+    const acc = accountsMap.get(t.account_id);
+    if (acc && fields.amount !== undefined) {
+        const oldAmount = t.amount;
+        const delta = t.type === 'income' ? fields.amount - oldAmount : oldAmount - fields.amount;
+        acc.balance += delta;
+        await db.from('accounts').update({ balance: acc.balance }).eq('id', t.account_id);
+        updateBalancesDisplay();
     }
-    updateBalancesDisplay();
-    addChatMessage('ai', '✏️ Transaction modifiée.');
-}
-async function handleAddAccount(inst) {
-    const name = (inst.new_name || '').toLowerCase().replace(/\s+/g, '_');
-    if (!name) return;
-    const { data, error } = await db.from('accounts').insert({ user_id: currentUser.id, name, balance: inst.balance || 0 }).select();
-    if (!error && data?.[0]) { accountsMap.set(data[0].id, data[0]); updateBalancesDisplay(); addChatMessage('ai', `🏦 Compte "${name}" créé.`); }
-}
-async function handleUpdateAccount(inst) {
-    let accId = null;
-    for (let [id, a] of accountsMap) if (a.name === inst.old_name) { accId = id; break; }
-    if (!accId) return;
-    const newName = (inst.new_name || '').toLowerCase().replace(/\s+/g, '_');
-    const upd = { name: newName };
-    if (inst.balance !== undefined) upd.balance = inst.balance;
-    await db.from('accounts').update(upd).eq('id', accId);
-    const acc = accountsMap.get(accId);
-    acc.name = newName;
-    if (inst.balance !== undefined) acc.balance = inst.balance;
-    updateBalancesDisplay();
-    addChatMessage('ai', `🏦 Compte renommé : "${inst.old_name}" → "${newName}".`);
 }
 
-// ==================== DONNÉES AVEC CACHE ====================
+async function handleAddToSavings(inst) {
+    const src = inst.source || 'cash';
+    let srcId = null, epId = null;
+    for (let [id, a] of accountsMap) { if (a.name === src) srcId = id; if (a.name === 'epargne') epId = id; }
+    if (!srcId || !epId) throw new Error('Compte introuvable');
+    
+    const srcAcc = accountsMap.get(srcId);
+    const epAcc = accountsMap.get(epId);
+    if (srcAcc.balance < inst.amount) throw new Error(`Solde ${src} insuffisant`);
+    
+    await db.from('accounts').update({ balance: srcAcc.balance - inst.amount }).eq('id', srcId);
+    await db.from('accounts').update({ balance: epAcc.balance + inst.amount }).eq('id', epId);
+    srcAcc.balance -= inst.amount;
+    epAcc.balance += inst.amount;
+    updateBalancesDisplay();
+}
+
+async function handleUpdateAccount(inst) {
+    const { old_name, new_name } = inst;
+    if (!old_name || !new_name) throw new Error('Noms de compte invalides');
+    
+    let accountId = null;
+    for (let [id, acc] of accountsMap) {
+        if (acc.name === old_name) {
+            accountId = id;
+            break;
+        }
+    }
+    if (!accountId) throw new Error(`Compte "${old_name}" introuvable`);
+    
+    const { error } = await db.from('accounts')
+        .update({ name: new_name })
+        .eq('id', accountId)
+        .eq('user_id', currentUser.id);
+    if (error) throw new Error(`Erreur mise à jour compte: ${error.message}`);
+    
+    const account = accountsMap.get(accountId);
+    if (account) account.name = new_name;
+    updateBalancesDisplay();
+}
+
+// ==================== DONNÉES ====================
 async function loadUserData(force = false) {
     const now = Date.now();
     if (!force && now - lastUserDataLoad < USER_DATA_CACHE_MS && accountsMap.size > 0 && categoriesMap.size > 0) {
-        console.log('[CACHE] loadUserData skipped — données fraîches');
         return;
     }
     lastUserDataLoad = now;
-
+    
     const { data: accounts } = await db.from('accounts').select('*').eq('user_id', currentUser.id);
     if (accounts) { accountsMap.clear(); accounts.forEach(a => accountsMap.set(a.id, a)); updateBalancesDisplay(); }
     const { data: cats } = await db.from('categories').select('*').eq('user_id', currentUser.id);
@@ -392,12 +447,17 @@ async function loadUserData(force = false) {
     window.accountsMap = accountsMap;
     window.categoriesMap = categoriesMap;
 }
+
 function updateBalancesDisplay() {
     const balancesDiv = document.getElementById('balances');
     if (balancesDiv) {
         balancesDiv.innerHTML = Array.from(accountsMap.values()).map(a => `<span>${getEmoji(a.name)} ${a.name}: ${a.balance} F</span>`).join('');
     }
+    const badge = document.getElementById('userEmailShort');
+    if (badge && currentUser) badge.textContent = currentUser.email.split('@')[0];
+    renderAccountCards();
 }
+
 function getEmoji(name) { return { cash: '💵', wave: '📱', epargne: '💰' }[name] || '🏦'; }
 
 // ==================== PÉRIODE ====================
@@ -418,45 +478,35 @@ function getDateRange(period) {
         };
     }
 }
+
 async function loadPeriod(period) {
     currentPeriode = getDateRange(period);
     window.currentPeriode = currentPeriode;
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector(`.filter-btn[data-period="${period}"]`)?.classList.add('active');
     lastTransactionsLoad = { key: '', time: 0 };
     await refreshDashboard();
 }
-async function setPeriodeCustom() {
-    const debut = document.getElementById('dateDebut').value;
-    const fin = document.getElementById('dateFin').value;
-    if (debut && fin) { 
-        currentPeriode = { debut, fin }; 
-        window.currentPeriode = currentPeriode; 
-        lastTransactionsLoad = { key: '', time: 0 };
-        await refreshDashboard(); 
-    }
-}
 
-// ==================== REFRESH AVEC VERROU GLOBAL ====================
 async function refreshDashboard() {
-    if (refreshPromise) {
-        console.log('[REFRESH] Déjà en cours, attente...');
-        return refreshPromise;
-    }
-
+    if (refreshPromise) return refreshPromise;
+    
     refreshPromise = (async () => {
         try {
             await loadTransactions();
             await loadUserData();
-            updateStats();
-            updateChart();
+            renderHomeSummary();
+            renderRecentTransactions();
             updateTransactionsTable();
-            await generateInsights();
+            if (document.getElementById('tab-stats').classList.contains('active')) {
+                renderStatsTab();
+            }
+            if (document.getElementById('tab-settings').classList.contains('active')) {
+                renderSettingsTab();
+            }
         } catch (err) {
             console.error('[REFRESH] Erreur:', err);
         }
     })();
-
+    
     try {
         await refreshPromise;
     } finally {
@@ -467,12 +517,11 @@ async function refreshDashboard() {
 async function loadTransactions() {
     const cacheKey = `${currentUser.id}_${currentPeriode.debut}_${currentPeriode.fin}`;
     const now = Date.now();
-
+    
     if (now - lastTransactionsLoad.time < TRANSACTIONS_CACHE_MS && lastTransactionsLoad.key === cacheKey) {
-        console.log('[CACHE] loadTransactions skipped — même période, données fraîches');
         return;
     }
-
+    
     const { data } = await db.from('transactions')
         .select('*, categories(name,icon), accounts(name)')
         .eq('user_id', currentUser.id)
@@ -483,45 +532,413 @@ async function loadTransactions() {
     window.transactionsData = transactionsData;
     lastTransactionsLoad = { key: cacheKey, time: Date.now() };
 }
-function updateStats() {
-    let total = 0, income = 0;
-    transactionsData.forEach(t => { if (t.type === 'expense') total += t.amount; if (t.type === 'income') income += t.amount; });
-    const nbJ = Math.max(1, Math.ceil((new Date(currentPeriode.fin) - new Date(currentPeriode.debut)) / (1000 * 3600 * 24)));
-    const statsContainer = document.getElementById('statsContainer');
-    if (statsContainer) {
-        statsContainer.innerHTML = `
-            <div class="stat-card"><h3>💸 Dépenses</h3><div class="stat-number">${total.toFixed(0)} F</div></div>
-            <div class="stat-card"><h3>📈 Revenus</h3><div class="stat-number">${income.toFixed(0)} F</div></div>
-            <div class="stat-card"><h3>📊 Moy/jour</h3><div class="stat-number">${(total / nbJ).toFixed(0)} F</div></div>
-            <div class="stat-card"><h3>📅 Transactions</h3><div class="stat-number">${transactionsData.length}</div></div>
-        `;
-    }
+
+// ==================== RENDER ACCUEIL ====================
+function renderAccountCards() {
+    const container = document.getElementById('accountsCards');
+    if (!container || !window.accountsMap) return;
+    const emojis = { cash: '💵', wave: '📱', epargne: '💰' };
+    container.innerHTML = Array.from(window.accountsMap.values()).map((a, i) => `
+        <div class="account-card" style="animation-delay:${i * 0.07}s">
+            <div class="account-card-icon">${emojis[a.name] || '🏦'}</div>
+            <div class="account-card-name">${a.name}</div>
+            <div class="account-card-balance">${Number(a.balance).toLocaleString('fr')} <span>F</span></div>
+        </div>
+    `).join('');
 }
-function updateChart() {
-    const ctx = document.getElementById('expensesChart');
-    if (!ctx) return;
-    const totals = new Map();
-    transactionsData.forEach(t => { if (t.type === 'expense') { const n = t.categories?.name || 'Autres'; totals.set(n, (totals.get(n) || 0) + t.amount); } });
-    if (expensesChart) expensesChart.destroy();
-    if (!totals.size) return;
-    expensesChart = new Chart(ctx, {
-        type: 'doughnut',
-        data: { labels: [...totals.keys()], datasets: [{ data: [...totals.values()], backgroundColor: ['#3b82f6', '#f97316', '#10b981', '#ef4444', '#8b5cf6'] }] }
+
+function renderHomeSummary() {
+    if (!window.transactionsData) return;
+    const txs = window.transactionsData;
+    let expense = 0, income = 0;
+    txs.forEach(t => {
+        if (t.type === 'expense') expense += t.amount;
+        else income += t.amount;
     });
+    const net = income - expense;
+    const nbJ = Math.max(1, Math.ceil((new Date(currentPeriode.fin) - new Date(currentPeriode.debut)) / 86400000));
+    const avg = expense / nbJ;
+    
+    setEl('homeExpense', expense);
+    setEl('homeIncome', income);
+    const netEl = document.getElementById('homeNet');
+    if (netEl) {
+        netEl.textContent = (net >= 0 ? '+' : '') + fmt(net);
+        netEl.style.color = net >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+    setEl('homeAvg', avg);
 }
-async function generateInsights() {
-    const total = transactionsData.reduce((s, t) => t.type === 'expense' ? s + t.amount : s, 0);
-    const nbJ = Math.max(1, Math.ceil((new Date(currentPeriode.fin) - new Date(currentPeriode.debut)) / (1000 * 3600 * 24)));
-    const moy = total / nbJ;
-    const insightsBox = document.getElementById('insightsBox');
-    if (insightsBox) {
-        insightsBox.innerHTML = `
-            <p>📉 Moy/jour : <strong>${moy.toFixed(0)} F</strong></p>
-            <p>💡 ${moy > 5000 ? 'Dépenses élevées' : 'Bon contrôle'}</p>`;
+
+function renderRecentTransactions() {
+    const container = document.getElementById('recentTransactions');
+    if (!container || !window.transactionsData) return;
+    const recent = [...window.transactionsData].slice(0, 4);
+    if (!recent.length) {
+        container.innerHTML = `<div class="empty-state"><div class="empty-icon">💸</div>Aucune transaction</div>`;
+        return;
+    }
+    container.innerHTML = recent.map(t => buildTxRow(t, true)).join('');
+}
+
+function buildTxRow(t, compact = false) {
+    const cat = t.categories || { name: 'Autres', icon: '📦' };
+    const acc = t.accounts || { name: '?' };
+    const sign = t.type === 'expense' ? '-' : '+';
+    const cls = t.type === 'expense' ? 'expense' : 'income';
+    const desc = t.description || cat.name;
+    const actions = compact ? '' : `
+        <div class="tx-actions-inline">
+            <button class="btn-icon-sm" onclick="editTransaction('${t.id}')">✏️</button>
+            <button class="btn-icon-sm" onclick="deleteTransaction('${t.id}')">🗑️</button>
+        </div>`;
+    return `
+        <div class="tx-row">
+            <div class="tx-cat-badge">${cat.icon}</div>
+            <div class="tx-info">
+                <div class="tx-name">${desc}</div>
+                <div class="tx-meta">${t.date} · ${acc.name}</div>
+            </div>
+            <div class="tx-amount ${cls}">${sign}${fmt(t.amount)}</div>
+            ${actions}
+        </div>`;
+}
+
+// ==================== ONGLET TRANSACTIONS ====================
+function updateTransactionsTable() {
+    const container = document.getElementById('transactionsTableBody');
+    const paginationDiv = document.getElementById('transactionsPagination');
+    if (!container) return;
+    
+    let filtered = [...(window.transactionsData || [])];
+    const ft = window.filterType || 'all';
+    if (ft === 'expense') filtered = filtered.filter(t => t.type === 'expense');
+    if (ft === 'income') filtered = filtered.filter(t => t.type === 'income');
+    
+    const rpp = window.rowsPerPage || 10;
+    const totalPages = Math.ceil(filtered.length / rpp) || 1;
+    if (window.currentPage > totalPages) window.currentPage = 1;
+    const start = ((window.currentPage || 1) - 1) * rpp;
+    const rows = filtered.slice(start, start + rpp);
+    
+    if (!rows.length) {
+        container.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div>Aucune transaction trouvée</div>`;
+    } else {
+        container.innerHTML = rows.map(t => buildTxRow(t, false)).join('');
+    }
+    
+    if (paginationDiv) {
+        paginationDiv.innerHTML = `
+            <span class="pagination-info">${filtered.length} transaction(s) · Page ${window.currentPage || 1}/${totalPages}</span>
+            <div class="pagination-btns">
+                <button class="page-btn" onclick="changePage(-1)" ${(window.currentPage||1) === 1 ? 'disabled' : ''}>◀</button>
+                <button class="page-btn" onclick="changePage(1)" ${(window.currentPage||1) >= totalPages ? 'disabled' : ''}>▶</button>
+            </div>`;
     }
 }
 
-// ==================== SAVE TRANSACTION FORM ====================
+function setFilterType(type) {
+    window.filterType = type;
+    window.currentPage = 1;
+    document.querySelectorAll('.type-pill').forEach(b => {
+        b.classList.toggle('active', b.dataset.type === type);
+    });
+    updateTransactionsTable();
+}
+
+window.changePage = (delta) => {
+    let count = window.transactionsData?.length || 0;
+    if (window.filterType === 'expense') count = window.transactionsData?.filter(t => t.type === 'expense').length || 0;
+    else if (window.filterType === 'income') count = window.transactionsData?.filter(t => t.type === 'income').length || 0;
+    const total = Math.ceil(count / (window.rowsPerPage || 10));
+    const newPage = (window.currentPage || 1) + delta;
+    if (newPage >= 1 && newPage <= total) { window.currentPage = newPage; updateTransactionsTable(); }
+};
+
+// ==================== ONGLET STATS ====================
+let balanceChartInstance = null;
+let expensesChartInstance = null;
+
+function renderStatsTab() {
+    renderStatsKPIs();
+    renderDonutChart();
+    renderBalanceCurve();
+    renderComparison();
+    generateInsights();
+}
+
+function renderStatsKPIs() {
+    const txs = window.transactionsData || [];
+    let expense = 0, income = 0;
+    txs.forEach(t => { if (t.type === 'expense') expense += t.amount; else income += t.amount; });
+    const nbJ = Math.max(1, Math.ceil((new Date(currentPeriode.fin) - new Date(currentPeriode.debut)) / 86400000));
+    
+    const el = document.getElementById('statsKpis');
+    if (!el) return;
+    el.innerHTML = `
+        <div class="kpi-card k-expense"><div class="kpi-label">💸 Dépenses</div><div class="kpi-value">${fmt(expense)} F</div></div>
+        <div class="kpi-card k-income"><div class="kpi-label">💰 Revenus</div><div class="kpi-value">${fmt(income)} F</div></div>
+        <div class="kpi-card k-avg"><div class="kpi-label">📊 Moy/jour</div><div class="kpi-value">${fmt(expense / nbJ)} F</div></div>
+        <div class="kpi-card k-count"><div class="kpi-label">📅 Transactions</div><div class="kpi-value">${txs.length}</div></div>
+    `;
+}
+
+function renderDonutChart() {
+    const ctx = document.getElementById('expensesChart');
+    if (!ctx) return;
+    const totals = new Map();
+    (window.transactionsData || []).forEach(t => {
+        if (t.type === 'expense') {
+            const n = t.categories?.name || 'Autres';
+            totals.set(n, (totals.get(n) || 0) + t.amount);
+        }
+    });
+    if (expensesChartInstance) expensesChartInstance.destroy();
+    if (!totals.size) return;
+    expensesChartInstance = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: [...totals.keys()],
+            datasets: [{ data: [...totals.values()], backgroundColor: ['#00d68f','#ff5370','#4d9fff','#ffb547','#c084fc'] }]
+        },
+        options: { cutout: '65%', plugins: { legend: { position: 'bottom', labels: { color: '#9aa3b8', font: { size: 11 } } } } }
+    });
+}
+
+function renderBalanceCurve() {
+    const ctx = document.getElementById('balanceChart');
+    if (!ctx) return;
+    const txs = [...(window.transactionsData || [])].sort((a,b) => new Date(a.date) - new Date(b.date));
+    if (!txs.length) return;
+    const byDate = new Map();
+    txs.forEach(t => {
+        const d = t.date;
+        const delta = t.type === 'income' ? t.amount : -t.amount;
+        byDate.set(d, (byDate.get(d) || 0) + delta);
+    });
+    const dates = [...byDate.keys()].sort();
+    let running = 0;
+    const values = dates.map(d => { running += byDate.get(d); return running; });
+    if (balanceChartInstance) balanceChartInstance.destroy();
+    balanceChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: dates.map(d => d.slice(5)),
+            datasets: [{ label: 'Solde net', data: values, borderColor: '#00d68f', backgroundColor: 'rgba(0,214,143,0.08)', borderWidth: 2, pointRadius: 3, fill: true, tension: 0.35 }]
+        },
+        options: { plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#5a6277' } }, y: { ticks: { color: '#5a6277' } } } }
+    });
+}
+
+async function renderComparison() {
+    const el = document.getElementById('compareCard');
+    if (!el || !window.currentPeriode) return;
+    const debut = new Date(window.currentPeriode.debut);
+    const fin = new Date(window.currentPeriode.fin);
+    const diff = fin - debut;
+    const prevDebut = new Date(debut - diff - 86400000).toISOString().slice(0,10);
+    const prevFin = new Date(debut - 86400000).toISOString().slice(0,10);
+    
+    try {
+        const { data: prev } = await db.from('transactions')
+            .select('amount,type')
+            .eq('user_id', currentUser.id)
+            .gte('date', prevDebut)
+            .lte('date', prevFin);
+        let prevExp = 0, prevInc = 0;
+        (prev || []).forEach(t => { if (t.type === 'expense') prevExp += t.amount; else prevInc += t.amount; });
+        let curExp = 0, curInc = 0;
+        (window.transactionsData || []).forEach(t => { if (t.type === 'expense') curExp += t.amount; else curInc += t.amount; });
+        const expDelta = prevExp ? Math.round((curExp - prevExp) / prevExp * 100) : null;
+        const incDelta = prevInc ? Math.round((curInc - prevInc) / prevInc * 100) : null;
+        el.innerHTML = `
+            <div class="compare-row"><span class="compare-label">💸 Dépenses</span><span class="compare-val">${fmt(curExp)} F</span>${deltaTag(expDelta, true)}</div>
+            <div class="compare-row"><span class="compare-label">💰 Revenus</span><span class="compare-val">${fmt(curInc)} F</span>${deltaTag(incDelta, false)}</div>`;
+    } catch(e) {
+        el.innerHTML = '<div class="empty-state">Impossible de charger la comparaison</div>';
+    }
+}
+
+function deltaTag(pct, inverse) {
+    if (pct === null) return `<span class="compare-delta delta-neutral">—</span>`;
+    const isUp = pct > 0;
+    const isBad = inverse ? isUp : !isUp;
+    const cls = pct === 0 ? 'delta-neutral' : isBad ? 'delta-up' : 'delta-down';
+    return `<span class="compare-delta ${cls}">${pct > 0 ? '+' : ''}${pct}%</span>`;
+}
+
+async function generateInsights() {
+    const el = document.getElementById('insightsContent');
+    if (!el) return;
+    const txs = window.transactionsData || [];
+    if (!txs.length) { el.innerHTML = '<p>Aucune donnée pour cette période.</p>'; return; }
+    let expense = 0;
+    const catMap = new Map();
+    txs.forEach(t => {
+        if (t.type === 'expense') {
+            expense += t.amount;
+            const n = t.categories?.name || 'Autres';
+            catMap.set(n, (catMap.get(n) || 0) + t.amount);
+        }
+    });
+    const nbJ = Math.max(1, Math.ceil((new Date(currentPeriode.fin) - new Date(currentPeriode.debut)) / 86400000));
+    const avg = expense / nbJ;
+    const topCat = [...catMap.entries()].sort((a,b) => b[1]-a[1])[0];
+    el.innerHTML = `
+        <p>📉 Moyenne/jour : <strong>${fmt(avg)} F</strong></p>
+        ${topCat ? `<p>🏆 Catégorie principale : <strong>${topCat[0]}</strong> (${fmt(topCat[1])} F)</p>` : ''}
+        <p>💡 ${avg > 5000 ? '⚠️ Dépenses élevées, pensez à optimiser.' : '✅ Bon contrôle de vos dépenses.'}</p>
+    `;
+}
+
+// ==================== ONGLET PARAMÈTRES ====================
+function renderSettingsTab() {
+    renderAccountsSettings();
+    renderCategoriesSettings();
+    const emailEl = document.getElementById('settingsEmail');
+    if (emailEl && window.currentUser) emailEl.textContent = window.currentUser.email;
+}
+
+function renderAccountsSettings() {
+    const el = document.getElementById('accountsListSettings');
+    if (!el || !window.accountsMap) return;
+    const emojis = { cash: '💵', wave: '📱', epargne: '💰' };
+    const items = Array.from(window.accountsMap.values());
+    if (!items.length) { el.innerHTML = '<div class="empty-state">Aucun compte</div>'; return; }
+    el.innerHTML = items.map(a => `
+        <div class="settings-item">
+            <div class="settings-item-left">
+                <div class="settings-item-icon">${emojis[a.name] || '🏦'}</div>
+                <div>
+                    <div class="settings-item-name">${a.name}</div>
+                    <div class="settings-item-sub">${Number(a.balance).toLocaleString('fr')} F</div>
+                </div>
+            </div>
+            <div class="settings-item-actions">
+                <button class="settings-btn" onclick="editAccountSettings('${a.id}')">✏️</button>
+                <button class="settings-btn danger" onclick="deleteAccountSettings('${a.id}')">🗑️</button>
+            </div>
+        </div>`).join('');
+}
+
+function renderCategoriesSettings() {
+    const el = document.getElementById('categoriesListSettings');
+    if (!el || !window.categoriesMap) return;
+    const items = Array.from(window.categoriesMap.values());
+    if (!items.length) { el.innerHTML = '<div class="empty-state">Aucune catégorie</div>'; return; }
+    el.innerHTML = items.map(c => `
+        <div class="settings-item">
+            <div class="settings-item-left">
+                <div class="settings-item-icon">${c.icon || '📂'}</div>
+                <div class="settings-item-name">${c.name}</div>
+            </div>
+            <div class="settings-item-actions">
+                <button class="settings-btn danger" onclick="deleteCategorySettings('${c.id}')">🗑️</button>
+            </div>
+        </div>`).join('');
+}
+
+window.editAccountSettings = async (id) => {
+    const acc = window.accountsMap?.get(id);
+    if (!acc) return;
+    const newName = prompt('Nouveau nom :', acc.name);
+    if (newName && newName !== acc.name) {
+        await executeRealAction({ action: 'update_account', old_name: acc.name, new_name: newName });
+        await refreshDashboard();
+        renderSettingsTab();
+    }
+};
+
+window.deleteAccountSettings = async (id) => {
+    const acc = window.accountsMap?.get(id);
+    if (!acc || !confirm(`Supprimer "${acc.name}" ?`)) return;
+    await db.from('accounts').delete().eq('id', id).eq('user_id', currentUser.id);
+    window.accountsMap.delete(id);
+    renderAccountCards();
+    renderSettingsTab();
+    await refreshDashboard();
+};
+
+window.deleteCategorySettings = async (id) => {
+    const cat = window.categoriesMap?.get(id);
+    if (!cat || !confirm(`Supprimer "${cat.name}" ?`)) return;
+    await db.from('categories').delete().eq('id', id).eq('user_id', currentUser.id);
+    window.categoriesMap.delete(id);
+    renderCategoriesSettings();
+};
+
+// ==================== HELPERS ====================
+function fmt(n) { return Math.round(n).toLocaleString('fr'); }
+function setEl(id, val) { const el = document.getElementById(id); if (el) el.textContent = fmt(val) + ' F'; }
+
+function openModal(id) { const m = document.getElementById(id); if (m) m.classList.add('open'); }
+window.closeModal = function(id) { const m = document.getElementById(id); if (m) m.classList.remove('open'); };
+
+function setTransType(value) {
+    document.getElementById('transType').value = value;
+    document.querySelectorAll('.type-toggle-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.value === value);
+    });
+}
+
+function loadPeriodStats(period) {
+    document.querySelectorAll('#tab-stats .pill').forEach(b => {
+        b.classList.toggle('active', b.dataset.period === period);
+    });
+    loadPeriod(period).then(() => renderStatsTab());
+}
+
+function exportCSV() {
+    const txs = window.transactionsData || [];
+    if (!txs.length) { alert('Aucune transaction à exporter.'); return; }
+    const header = ['Date', 'Type', 'Montant (F)', 'Catégorie', 'Compte', 'Description'];
+    const rows = txs.map(t => [
+        t.date, t.type === 'expense' ? 'Dépense' : 'Revenu', t.amount,
+        t.categories?.name || 'Autres', t.accounts?.name || '?',
+        (t.description || '').replace(/,/g, ';')
+    ]);
+    const csv = [header, ...rows].map(r => r.join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `kaalisi_export_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+}
+
+// ==================== MODAL TRANSACTIONS ====================
+window.openTransactionModal = function(mode = 'add', id = null) {
+    const title = document.getElementById('transactionModalTitle');
+    if (title) title.textContent = mode === 'edit' ? 'Modifier transaction' : 'Ajouter transaction';
+    const form = document.getElementById('transactionForm');
+    form.dataset.mode = mode;
+    form.dataset.transactionId = id || '';
+    const catSel = document.getElementById('transCategory');
+    const accSel = document.getElementById('transAccount');
+    catSel.innerHTML = '<option value="">— Choisir —</option>' +
+        Array.from((window.categoriesMap || new Map()).values())
+            .map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('');
+    accSel.innerHTML = '<option value="">— Choisir —</option>' +
+        Array.from((window.accountsMap || new Map()).values())
+            .map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+    if (mode === 'edit' && id) {
+        const t = (window.transactionsData || []).find(x => x.id === id);
+        if (t) {
+            document.getElementById('transAmount').value = t.amount;
+            document.getElementById('transDescription').value = t.description || '';
+            setTransType(t.type);
+            document.getElementById('transDate').value = t.date;
+            catSel.value = t.category_id || '';
+            accSel.value = t.account_id || '';
+        }
+    } else {
+        document.getElementById('transactionForm').reset();
+        document.getElementById('transDate').value = new Date().toISOString().slice(0,10);
+        setTransType('expense');
+    }
+    openModal('transactionModal');
+};
+
 async function saveTransactionForm() {
     const form = document.getElementById('transactionForm');
     const mode = form.dataset.mode;
@@ -532,83 +949,105 @@ async function saveTransactionForm() {
     const date = document.getElementById('transDate')?.value;
     const accountId = document.getElementById('transAccount')?.value;
     const categoryId = document.getElementById('transCategory')?.value;
-
+    
     if (!amount || !accountId || !date) {
         alert('Veuillez remplir tous les champs obligatoires');
         return;
     }
-
+    
     const account = window.accountsMap?.get(accountId);
     const category = window.categoriesMap?.get(categoryId);
-
+    
     if (mode === 'edit' && transId) {
-        await executeInstruction({
+        await executeRealAction({
             action: 'update_transaction',
             transaction_id: transId,
-            fields_to_update: {
-                amount,
-                description,
-                date,
-                account: account?.name,
-                category: category?.name
-            }
+            fields_to_update: { amount, description, date, account: account?.name, category: category?.name }
         });
     } else {
-        await executeInstruction({
+        await executeRealAction({
             action: type === 'income' ? 'add_income' : 'add_expense',
-            amount,
-            description,
-            category: category?.name || 'Autres',
-            account: account?.name,
-            date
+            amount, description, category: category?.name || 'Autres', account: account?.name, date
         });
     }
-
+    
     closeModal('transactionModal');
     await refreshDashboard();
 }
 
-// ==================== EVENT LISTENERS ====================
+window.deleteTransaction = async function(id) {
+    if (!confirm('Supprimer cette transaction ?')) return;
+    await executeRealAction({ action: 'delete_transaction', transaction_id: id });
+    await refreshDashboard();
+};
+
+window.editTransaction = function(id) { window.openTransactionModal('edit', id); };
+
+// ==================== SWITCH TAB & OVERRIDES ====================
+window.switchTab = function(tabName) {
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    const tabEl = document.getElementById('tab-' + tabName);
+    const navBtn = document.querySelector(`.nav-btn[data-tab="${tabName}"]`);
+    if (tabEl) tabEl.classList.add('active');
+    if (navBtn) navBtn.classList.add('active');
+    if (tabName === 'stats') renderStatsTab();
+    if (tabName === 'settings') renderSettingsTab();
+    if (tabName === 'home') renderRecentTransactions();
+};
+
+window.updateTransactionsTable = updateTransactionsTable;
+
+// ==================== INIT ====================
 document.getElementById('loginBtn').onclick = login;
 document.getElementById('registerBtn').onclick = register;
 document.getElementById('logoutBtn').onclick = logout;
 document.getElementById('sendBtn').onclick = sendMessage;
-document.getElementById('applyCustomBtn').onclick = setPeriodeCustom;
-document.querySelectorAll('.filter-btn').forEach(b => b.onclick = () => loadPeriod(b.dataset.period));
+document.getElementById('applyCustomBtn').onclick = () => {
+    const debut = document.getElementById('dateDebut').value;
+    const fin = document.getElementById('dateFin').value;
+    if (debut && fin) { currentPeriode = { debut, fin }; window.currentPeriode = currentPeriode; refreshDashboard(); }
+};
+document.getElementById('addTransactionBtn').onclick = () => window.openTransactionModal('add');
+document.getElementById('resetChatBtn').onclick = resetConversation;
+document.getElementById('openAddAccountBtn')?.addEventListener('click', () => openModal('addAccountModal'));
+document.getElementById('openAddCategoryBtn')?.addEventListener('click', () => openModal('addCategoryModal'));
 
-const manageCategoriesBtn = document.getElementById('manageCategoriesBtn');
-if (manageCategoriesBtn) manageCategoriesBtn.onclick = function showCategoriesModal() { alert('Fonction à implémenter'); };
-const addCategoryBtn = document.getElementById('addCategoryBtn');
-if (addCategoryBtn) addCategoryBtn.onclick = function addCategory() { alert('Fonction à implémenter'); };
-const addTransactionBtn = document.getElementById('addTransactionBtn');
-if (addTransactionBtn) addTransactionBtn.onclick = () => window.openTransactionModal('add');
-const manageAccountsBtn = document.getElementById('manageAccountsBtn');
-if (manageAccountsBtn) manageAccountsBtn.onclick = function openAccountsModal() { alert('Fonction à implémenter'); };
-const resetChatBtn = document.getElementById('resetChatBtn');
-if (resetChatBtn) resetChatBtn.onclick = resetConversation;
+document.getElementById('addAccountBtn')?.addEventListener('click', async () => {
+    const name = document.getElementById('newAccountName').value.trim().toLowerCase().replace(/\s+/g,'_');
+    const balance = parseFloat(document.getElementById('newAccountBalance').value) || 0;
+    if (!name) return;
+    await db.from('accounts').insert({ user_id: currentUser.id, name, balance });
+    await refreshDashboard();
+    closeModal('addAccountModal');
+    renderSettingsTab();
+});
 
-document.querySelectorAll('.close').forEach(btn => btn.onclick = () => closeModal(btn.closest('.modal').id));
-window.onclick = e => { if (e.target.classList.contains('modal')) e.target.style.display = 'none'; };
+document.getElementById('addCategoryBtn')?.addEventListener('click', async () => {
+    const name = document.getElementById('newCategoryName').value.trim();
+    const icon = document.getElementById('newCategoryIcon').value.trim() || '📌';
+    if (!name || !currentUser) return;
+    await db.from('categories').insert({ user_id: currentUser.id, name, icon });
+    await refreshDashboard();
+    closeModal('addCategoryModal');
+    renderSettingsTab();
+});
+
 userInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
 
-// Sauvegarde des originaux pour les overrides
-window._origUpdateBalances = updateBalancesDisplay;
-window._origRefresh = refreshDashboard;
-window.executeInstruction = executeInstruction;
-window.saveTransactionForm = saveTransactionForm;
-
-// Fonctions exposées globalement
-window.deleteTransaction = async function(id) {
-    if (!confirm('Supprimer cette transaction ?')) return;
-    await executeInstruction({ action: 'delete_transaction', transaction_id: id });
-    await refreshDashboard();
-};
-window.editTransaction = function(id) {
-    window.openTransactionModal('edit', id);
-};
-window.closeModal = function(id) {
-    const m = document.getElementById(id);
-    if (m) m.style.display = 'none';
-};
-
 checkAuth();
+
+// Thème
+const themeToggle = document.getElementById('themeToggle');
+if (themeToggle) {
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    themeToggle.textContent = savedTheme === 'dark' ? '🌙' : '☀️';
+    themeToggle.addEventListener('click', () => {
+        const current = document.documentElement.getAttribute('data-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('theme', next);
+        themeToggle.textContent = next === 'dark' ? '🌙' : '☀️';
+    });
+}
