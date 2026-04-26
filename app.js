@@ -48,7 +48,7 @@ async function register() {
     const password = document.getElementById('password').value;
     const { error } = await db.auth.signUp({ email, password });
     if (error) alert(error.message);
-    else alert('Inscription réussie ! Connectez-vous.');
+    else alert('Inscription réussie ! Vérifiez votre "email" pour vous connectez.');
 }
 async function logout() { await db.auth.signOut(); window.location.reload(); }
 
