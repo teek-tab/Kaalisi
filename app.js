@@ -100,14 +100,17 @@ function getActionDescription(inst) {
 async function sendMessage() {
     const message = userInput.value.trim();
     if (!message) return;
+
     addChatMessage('user', message);
     userInput.value = '';
     conversationMessages.push({ role: 'user', content: message });
+
     const tempDiv = document.createElement('div');
     tempDiv.className = 'ai-msg';
     tempDiv.textContent = '⏳ ...';
     chatMessages.appendChild(tempDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+
     try {
         const res = await fetch('/api/chat', {
             method: 'POST',
@@ -115,12 +118,17 @@ async function sendMessage() {
             body: JSON.stringify({
                 userId: currentUser.id,
                 periode: currentPeriode,
-                history: [...conversationMessages]
+                history: [...conversationMessages],
+                currentDate: new Date().toISOString().split('T')[0],
+                currentDateTime: new Date().toISOString()
             })
         });
+
         const result = await res.json();
         tempDiv.remove();
+
         let aiText = '';
+
         if (result.action && result.action !== 'answer' && result.action !== 'clarify') {
             await executeInstruction(result);
             aiText = result.message || getActionDescription(result);
@@ -129,7 +137,11 @@ async function sendMessage() {
             aiText = result.message || '';
             addChatMessage('ai', aiText);
         }
-        if (aiText) conversationMessages.push({ role: 'assistant', content: aiText });
+
+        if (aiText) {
+            conversationMessages.push({ role: 'assistant', content: aiText });
+        }
+
     } catch (err) {
         tempDiv.remove();
         addChatMessage('ai', '❌ Erreur de connexion.');
