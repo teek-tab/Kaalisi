@@ -1,4 +1,4 @@
-/* ==================== VARIABLES ==================== */
+/* ==================== VARIABLES THEME SOMBRE (défaut) ==================== */
 :root {
     --bg: #0a0c10;
     --bg2: #111318;
@@ -32,7 +32,30 @@
     --font-body: 'DM Sans', sans-serif;
 }
 
-/* ==================== RESET ==================== */
+/* ==================== THEME CLAIR ==================== */
+[data-theme="light"] {
+    --bg: #f0fdf4;
+    --bg2: #ffffff;
+    --surface: #ffffff;
+    --surface2: #f9fafb;
+    --border: rgba(0,0,0,0.08);
+    --border2: rgba(0,0,0,0.12);
+    --text: #111827;
+    --text2: #6b7280;
+    --text3: #9ca3af;
+    
+    --green: #10b981;
+    --green-dim: rgba(16,185,129,0.1);
+    --green-glow: rgba(16,185,129,0.2);
+    --red: #ef4444;
+    --red-dim: rgba(239,68,68,0.1);
+    --blue: #3b82f6;
+    --blue-dim: rgba(59,130,246,0.1);
+    --gold: #f59e0b;
+    --gold-dim: rgba(245,158,11,0.1);
+}
+
+/* ==================== RESET & BASE ==================== */
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 html { height: 100%; -webkit-tap-highlight-color: transparent; }
 body {
@@ -206,6 +229,26 @@ button { cursor: pointer; border: none; background: none; }
     letter-spacing: 0.04em;
     color: var(--text);
 }
+.top-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.theme-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.theme-btn:active { transform: scale(0.95); }
 .user-badge {
     font-size: 0.75rem;
     color: var(--text3);
@@ -562,7 +605,7 @@ button { cursor: pointer; border: none; background: none; }
     white-space: nowrap;
 }
 
-/* ==================== TRANSACTION LIST (onglet Transactions) ==================== */
+/* ==================== TRANSACTION LIST ==================== */
 .tx-actions-row {
     display: flex;
     align-items: center;
@@ -599,7 +642,6 @@ button { cursor: pointer; border: none; background: none; }
     white-space: nowrap;
     box-shadow: 0 2px 12px var(--green-glow);
 }
-
 .tx-list {
     display: flex;
     flex-direction: column;
@@ -757,7 +799,6 @@ button { cursor: pointer; border: none; background: none; }
     font-weight: 600;
     border: 1px solid rgba(255,83,112,0.2);
 }
-
 .settings-section {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -809,7 +850,6 @@ button { cursor: pointer; border: none; background: none; }
 }
 .settings-btn:active { background: var(--border2); }
 .settings-btn.danger:active { background: var(--red-dim); color: var(--red); }
-
 .settings-add-btn {
     width: 100%;
     padding: 13px;
@@ -823,7 +863,6 @@ button { cursor: pointer; border: none; background: none; }
     transition: background 0.2s;
 }
 .settings-add-btn:active { background: var(--green-dim); }
-
 .settings-row-btn {
     width: 100%;
     display: flex;
@@ -839,7 +878,7 @@ button { cursor: pointer; border: none; background: none; }
     font-size: 1.2rem;
 }
 
-/* ==================== BOTTOM NAV ==================== */
+/* ==================== BOTTOM NAV / SIDEBAR ==================== */
 .bottom-nav {
     position: fixed;
     bottom: 0;
@@ -965,8 +1004,6 @@ button { cursor: pointer; border: none; background: none; }
 .form-field input:focus,
 .form-field select:focus { border-color: var(--green); }
 .form-field input::placeholder { color: var(--text3); }
-
-/* Type toggle */
 .type-toggle {
     display: flex;
     gap: 8px;
@@ -999,8 +1036,6 @@ button { cursor: pointer; border: none; background: none; }
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
 }
-
-/* ==================== EMPTY STATE ==================== */
 .empty-state {
     text-align: center;
     padding: 32px 16px;
@@ -1009,14 +1044,78 @@ button { cursor: pointer; border: none; background: none; }
 }
 .empty-state .empty-icon { font-size: 2rem; margin-bottom: 8px; }
 
-/* ==================== DESKTOP CENTERING ==================== */
-@media (min-width: 481px) {
-    .app-shell, .bottom-nav {
-        max-width: 480px;
-        left: 50%;
-        transform: translateX(-50%);
-        right: auto;
+/* ==================== OPTION A : DESKTOP ADAPTATIF (≥768px) ==================== */
+@media (min-width: 768px) {
+    body {
+        background: #0a0c10;
     }
-    .app-shell { position: fixed; }
-    body { background: #06080c; }
+    .app-shell {
+        max-width: none;
+        width: 100%;
+        margin: 0;
+        left: auto;
+        transform: none;
+        flex-direction: row;
+    }
+    .bottom-nav {
+        position: relative;
+        width: auto;
+        max-width: none;
+        left: auto;
+        transform: none;
+        flex-direction: column;
+        height: auto;
+        min-height: 100vh;
+        border-top: none;
+        border-right: 1px solid var(--border);
+        padding-top: 68px;
+        background: var(--bg2);
+    }
+    .nav-btn {
+        flex-direction: row;
+        justify-content: flex-start;
+        gap: 12px;
+        padding: 14px 20px;
+        margin: 4px 8px;
+        border-radius: 14px;
+    }
+    .nav-btn.active {
+        background: var(--green-dim);
+    }
+    .nav-btn.active::after {
+        display: none;
+    }
+    .nav-icon {
+        font-size: 1.2rem;
+    }
+    .nav-label {
+        font-size: 0.85rem;
+    }
+    .tab-content {
+        flex: 1;
+        overflow-y: auto;
+    }
+    .page-scroll {
+        padding-bottom: 24px;
+    }
+    .summary-grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+    .accounts-scroll {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 12px;
+        overflow-x: visible;
+        margin: 0;
+        padding: 0;
+    }
+    .account-card {
+        width: auto;
+    }
+    .stats-kpis {
+        grid-template-columns: repeat(4, 1fr);
+    }
+    .chat-card {
+        max-width: 500px;
+    }
 }
