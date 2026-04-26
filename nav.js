@@ -1,14 +1,13 @@
-// Initialisation du thème (sans créer de nouvelle variable globale)
+// ==================== THÈME ====================
 (function initTheme() {
     const toggle = document.getElementById('themeToggle');
     if (toggle) {
         const savedTheme = localStorage.getItem('theme') || 'dark';
         document.documentElement.setAttribute('data-theme', savedTheme);
         toggle.textContent = savedTheme === 'dark' ? '🌙' : '☀️';
-
         toggle.addEventListener('click', () => {
             const current = document.documentElement.getAttribute('data-theme');
-            const next = current === 'dark' ? 'light' : 'dark';
+            const next    = current === 'dark' ? 'light' : 'dark';
             document.documentElement.setAttribute('data-theme', next);
             localStorage.setItem('theme', next);
             toggle.textContent = next === 'dark' ? '🌙' : '☀️';
@@ -17,23 +16,21 @@
 })();
 
 // ==================== NAVIGATION ONGLETS ====================
-
 function switchTab(tabName) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
 
-    const tabEl = document.getElementById('tab-' + tabName);
+    const tabEl  = document.getElementById('tab-' + tabName);
     const navBtn = document.querySelector(`.nav-btn[data-tab="${tabName}"]`);
-    if (tabEl) tabEl.classList.add('active');
+    if (tabEl)  tabEl.classList.add('active');
     if (navBtn) navBtn.classList.add('active');
 
-    if (tabName === 'stats') renderStatsTab();
+    if (tabName === 'stats')    renderStatsTab();
     if (tabName === 'settings') renderSettingsTab();
-    if (tabName === 'home') renderRecentTransactions();
+    if (tabName === 'home')     renderRecentTransactions();
 }
 
 // ==================== RENDER ACCUEIL ====================
-
 function renderAccountCards() {
     const container = document.getElementById('accountsCards');
     if (!container || !window.accountsMap) return;
@@ -55,20 +52,22 @@ function renderHomeSummary() {
         if (t.type === 'expense') expense += t.amount;
         else income += t.amount;
     });
-    const net = income - expense;
+    const net   = income - expense;
     const debut = window.currentPeriode?.debut;
-    const fin = window.currentPeriode?.fin;
-    const nbJ = debut && fin ? Math.max(1, Math.ceil((new Date(fin) - new Date(debut)) / 86400000)) : 30;
-    const avg = expense / nbJ;
+    const fin   = window.currentPeriode?.fin;
+    const nbJ   = debut && fin ? Math.max(1, Math.ceil((new Date(fin) - new Date(debut)) / 86400000)) : 30;
+    const avg   = expense / nbJ;
 
-    setEl('homeExpense', fmt(expense));
-    setEl('homeIncome', fmt(income));
+    // FIX : setEl reçoit directement la valeur numérique, fmt est appelé à l'intérieur
+    setEl('homeExpense', expense);
+    setEl('homeIncome',  income);
+    setEl('homeAvg',     avg);
+
     const netEl = document.getElementById('homeNet');
     if (netEl) {
-        netEl.textContent = (net >= 0 ? '+' : '') + fmt(net);
-        netEl.style.color = net >= 0 ? 'var(--green)' : 'var(--red)';
+        netEl.textContent  = (net >= 0 ? '+' : '') + fmt(net) + ' F';
+        netEl.style.color  = net >= 0 ? 'var(--green)' : 'var(--red)';
     }
-    setEl('homeAvg', fmt(avg));
 }
 
 function renderRecentTransactions() {
@@ -83,10 +82,10 @@ function renderRecentTransactions() {
 }
 
 function buildTxRow(t, compact = false) {
-    const cat = t.categories || { name: 'Autres', icon: '📦' };
-    const acc = t.accounts || { name: '?' };
+    const cat  = t.categories || { name: 'Autres', icon: '📦' };
+    const acc  = t.accounts   || { name: '?' };
     const sign = t.type === 'expense' ? '-' : '+';
-    const cls = t.type === 'expense' ? 'expense' : 'income';
+    const cls  = t.type === 'expense' ? 'expense' : 'income';
     const desc = t.description || cat.name;
     const actions = compact ? '' : `
         <div class="tx-actions-inline">
@@ -106,9 +105,8 @@ function buildTxRow(t, compact = false) {
 }
 
 // ==================== ONGLET TRANSACTIONS ====================
-
 function updateTransactionsTable() {
-    const container = document.getElementById('transactionsTableBody');
+    const container    = document.getElementById('transactionsTableBody');
     const paginationDiv = document.getElementById('transactionsPagination');
     if (!container) return;
 
@@ -118,22 +116,22 @@ function updateTransactionsTable() {
     if (ft === 'income')  filtered = filtered.filter(t => t.type === 'income');
 
     const sc = window.sortColumn || 'date';
-    const so = window.sortOrder || 'desc';
+    const so = window.sortOrder  || 'desc';
     filtered.sort((a, b) => {
         let va, vb;
-        if (sc === 'date') { va = new Date(a.date); vb = new Date(b.date); }
+        if (sc === 'date')     { va = new Date(a.date); vb = new Date(b.date); }
         else if (sc === 'amount') { va = a.amount; vb = b.amount; }
         else { va = (a.categories?.name || '').toLowerCase(); vb = (b.categories?.name || '').toLowerCase(); }
         if (va < vb) return so === 'asc' ? -1 : 1;
-        if (va > vb) return so === 'asc' ? 1 : -1;
+        if (va > vb) return so === 'asc' ?  1 : -1;
         return 0;
     });
 
-    const rpp = window.rowsPerPage || 10;
+    const rpp        = window.rowsPerPage || 10;
     const totalPages = Math.ceil(filtered.length / rpp) || 1;
     if (window.currentPage > totalPages) window.currentPage = 1;
     const start = ((window.currentPage || 1) - 1) * rpp;
-    const rows = filtered.slice(start, start + rpp);
+    const rows  = filtered.slice(start, start + rpp);
 
     if (!rows.length) {
         container.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div>Aucune transaction trouvée</div>`;
@@ -146,13 +144,13 @@ function updateTransactionsTable() {
             <span class="pagination-info">${filtered.length} transaction(s) · Page ${window.currentPage || 1}/${totalPages}</span>
             <div class="pagination-btns">
                 <button class="page-btn" onclick="changePage(-1)" ${(window.currentPage||1) === 1 ? 'disabled' : ''}>◀</button>
-                <button class="page-btn" onclick="changePage(1)" ${(window.currentPage||1) >= totalPages ? 'disabled' : ''}>▶</button>
+                <button class="page-btn" onclick="changePage(1)"  ${(window.currentPage||1) >= totalPages ? 'disabled' : ''}>▶</button>
             </div>`;
     }
 }
 
 function setFilterType(type) {
-    window.filterType = type;
+    window.filterType  = type;
     window.currentPage = 1;
     document.querySelectorAll('.type-pill').forEach(b => {
         b.classList.toggle('active', b.dataset.type === type);
@@ -164,14 +162,12 @@ window.changePage = (delta) => {
     let count = window.transactionsData?.length || 0;
     if (window.filterType === 'expense') count = window.transactionsData?.filter(t => t.type === 'expense').length || 0;
     else if (window.filterType === 'income') count = window.transactionsData?.filter(t => t.type === 'income').length || 0;
-    const total = Math.ceil(count / (window.rowsPerPage || 10));
+    const total   = Math.ceil(count / (window.rowsPerPage || 10));
     const newPage = (window.currentPage || 1) + delta;
     if (newPage >= 1 && newPage <= total) { window.currentPage = newPage; updateTransactionsTable(); }
 };
 
 // ==================== ONGLET STATS ====================
-// Les variables window.balanceChartInstance et window.expensesChartInstance sont définies dans app.js
-// Nous utilisons ici un cache local à ce module (pas de conflit)
 const _comparisonCache = { key: '', data: null, time: 0 };
 const _COMPARISON_CACHE_MS = 60000;
 
@@ -188,8 +184,8 @@ function renderStatsKPIs() {
     let expense = 0, income = 0;
     txs.forEach(t => { if (t.type === 'expense') expense += t.amount; else income += t.amount; });
     const debut = window.currentPeriode?.debut;
-    const fin = window.currentPeriode?.fin;
-    const nbJ = debut && fin ? Math.max(1, Math.ceil((new Date(fin) - new Date(debut)) / 86400000)) : 30;
+    const fin   = window.currentPeriode?.fin;
+    const nbJ   = debut && fin ? Math.max(1, Math.ceil((new Date(fin) - new Date(debut)) / 86400000)) : 30;
 
     const el = document.getElementById('statsKpis');
     if (!el) return;
@@ -236,17 +232,18 @@ function renderDonutChart() {
 function renderBalanceCurve() {
     const ctx = document.getElementById('balanceChart');
     if (!ctx) return;
-    const txs = [...(window.transactionsData || [])].sort((a,b) => new Date(a.date) - new Date(b.date));
+    const txs = [...(window.transactionsData || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
     if (!txs.length) return;
+
     const byDate = new Map();
     txs.forEach(t => {
-        const d = t.date;
         const delta = t.type === 'income' ? t.amount : -t.amount;
-        byDate.set(d, (byDate.get(d) || 0) + delta);
+        byDate.set(t.date, (byDate.get(t.date) || 0) + delta);
     });
-    const dates = [...byDate.keys()].sort();
-    let running = 0;
+    const dates  = [...byDate.keys()].sort();
+    let running  = 0;
     const values = dates.map(d => { running += byDate.get(d); return running; });
+
     if (window.balanceChartInstance) window.balanceChartInstance.destroy();
     window.balanceChartInstance = new Chart(ctx, {
         type: 'line',
@@ -278,13 +275,13 @@ async function renderComparison() {
     const el = document.getElementById('compareCard');
     if (!el || !window.currentPeriode) return;
 
-    const debut = new Date(window.currentPeriode.debut);
-    const fin = new Date(window.currentPeriode.fin);
-    const diff = fin - debut;
-    const prevDebut = new Date(debut - diff - 86400000).toISOString().slice(0,10);
-    const prevFin  = new Date(debut - 86400000).toISOString().slice(0,10);
-    const cacheKey = `${prevDebut}_${prevFin}`;
-    const now = Date.now();
+    const debut    = new Date(window.currentPeriode.debut);
+    const fin      = new Date(window.currentPeriode.fin);
+    const diff     = fin - debut;
+    const prevDebut = new Date(debut - diff - 86400000).toISOString().slice(0, 10);
+    const prevFin   = new Date(debut - 86400000).toISOString().slice(0, 10);
+    const cacheKey  = `${prevDebut}_${prevFin}`;
+    const now       = Date.now();
 
     if (_comparisonCache.key === cacheKey && now - _comparisonCache.time < _COMPARISON_CACHE_MS) {
         el.innerHTML = _comparisonCache.data;
@@ -292,17 +289,20 @@ async function renderComparison() {
     }
 
     try {
-        const db = window.db || window._db;
+        const db = window.db;
         if (!db || !window.currentUser) { el.innerHTML = '<div class="empty-state">Données non disponibles</div>'; return; }
+
         const { data: prev } = await db.from('transactions')
             .select('amount,type')
             .eq('user_id', window.currentUser.id)
             .gte('date', prevDebut)
             .lte('date', prevFin);
+
         let prevExp = 0, prevInc = 0;
         (prev || []).forEach(t => { if (t.type === 'expense') prevExp += t.amount; else prevInc += t.amount; });
         let curExp = 0, curInc = 0;
         (window.transactionsData || []).forEach(t => { if (t.type === 'expense') curExp += t.amount; else curInc += t.amount; });
+
         const expDelta = prevExp ? Math.round((curExp - prevExp) / prevExp * 100) : null;
         const incDelta = prevInc ? Math.round((curInc - prevInc) / prevInc * 100) : null;
         const html = `
@@ -317,19 +317,19 @@ async function renderComparison() {
                 ${deltaTag(incDelta, false)}
             </div>`;
         el.innerHTML = html;
-        _comparisonCache.key = cacheKey;
+        _comparisonCache.key  = cacheKey;
         _comparisonCache.data = html;
         _comparisonCache.time = now;
-    } catch(e) {
+    } catch (e) {
         el.innerHTML = '<div class="empty-state">Impossible de charger la comparaison</div>';
     }
 }
 
 function deltaTag(pct, inverse) {
     if (pct === null) return `<span class="compare-delta delta-neutral">—</span>`;
-    const isUp = pct > 0;
+    const isUp  = pct > 0;
     const isBad = inverse ? isUp : !isUp;
-    const cls = pct === 0 ? 'delta-neutral' : isBad ? 'delta-up' : 'delta-down';
+    const cls   = pct === 0 ? 'delta-neutral' : isBad ? 'delta-up' : 'delta-down';
     return `<span class="compare-delta ${cls}">${pct > 0 ? '+' : ''}${pct}%</span>`;
 }
 
@@ -338,6 +338,7 @@ async function generateInsights() {
     if (!el) return;
     const txs = window.transactionsData || [];
     if (!txs.length) { el.innerHTML = '<p>Aucune donnée pour cette période.</p>'; return; }
+
     let expense = 0, income = 0;
     const catMap = new Map();
     txs.forEach(t => {
@@ -347,22 +348,21 @@ async function generateInsights() {
             catMap.set(n, (catMap.get(n) || 0) + t.amount);
         } else income += t.amount;
     });
-    const debut = window.currentPeriode?.debut;
-    const fin = window.currentPeriode?.fin;
-    const nbJ = debut && fin ? Math.max(1, Math.ceil((new Date(fin) - new Date(debut)) / 86400000)) : 30;
-    const avg = expense / nbJ;
-    const net = income - expense;
-    const topCat = [...catMap.entries()].sort((a,b) => b[1]-a[1])[0];
+    const debut  = window.currentPeriode?.debut;
+    const fin    = window.currentPeriode?.fin;
+    const nbJ    = debut && fin ? Math.max(1, Math.ceil((new Date(fin) - new Date(debut)) / 86400000)) : 30;
+    const avg    = expense / nbJ;
+    const net    = income - expense;
+    const topCat = [...catMap.entries()].sort((a, b) => b[1] - a[1])[0];
     el.innerHTML = `
         <p>📉 Moyenne/jour : <strong>${fmt(avg)} F</strong></p>
-        <p>⚖️ Solde net : <strong style="color:${net>=0?'var(--green)':'var(--red)'}">${net>=0?'+':''}${fmt(net)} F</strong></p>
+        <p>⚖️ Solde net : <strong style="color:${net >= 0 ? 'var(--green)' : 'var(--red)'}">${net >= 0 ? '+' : ''}${fmt(net)} F</strong></p>
         ${topCat ? `<p>🏆 Catégorie principale : <strong>${topCat[0]}</strong> (${fmt(topCat[1])} F)</p>` : ''}
         <p>💡 ${avg > 5000 ? '⚠️ Dépenses élevées, pensez à optimiser.' : '✅ Bon contrôle de vos dépenses.'}</p>
     `;
 }
 
 // ==================== ONGLET PARAMÈTRES ====================
-
 function renderSettingsTab() {
     renderAccountsSettings();
     renderCategoriesSettings();
@@ -374,7 +374,7 @@ function renderAccountsSettings() {
     const el = document.getElementById('accountsListSettings');
     if (!el || !window.accountsMap) return;
     const emojis = { cash: '💵', wave: '📱', epargne: '💰' };
-    const items = Array.from(window.accountsMap.values());
+    const items  = Array.from(window.accountsMap.values());
     if (!items.length) { el.innerHTML = '<div class="empty-state">Aucun compte</div>'; return; }
     el.innerHTML = items.map(a => `
         <div class="settings-item">
@@ -393,7 +393,7 @@ function renderAccountsSettings() {
 }
 
 function renderCategoriesSettings() {
-    const el = document.getElementById('categoriesListSettings');
+    const el    = document.getElementById('categoriesListSettings');
     if (!el || !window.categoriesMap) return;
     const items = Array.from(window.categoriesMap.values());
     if (!items.length) { el.innerHTML = '<div class="empty-state">Aucune catégorie</div>'; return; }
@@ -414,7 +414,9 @@ window.editAccountSettings = async (id) => {
     if (!acc) return;
     const newName = prompt('Nouveau nom :', acc.name);
     if (newName && newName !== acc.name) {
-        await window.executeInstruction({ action: 'update_account', old_name: acc.name, new_name: newName });
+        await window.db.from('accounts').update({ name: newName }).eq('id', id);
+        acc.name = newName;
+        renderAccountCards();
         renderSettingsTab();
     }
 };
@@ -422,35 +424,30 @@ window.editAccountSettings = async (id) => {
 window.deleteAccountSettings = async (id) => {
     const acc = window.accountsMap?.get(id);
     if (!acc || !confirm(`Supprimer "${acc.name}" ?`)) return;
-    const db = window.db;
-    if (db && window.currentUser) {
-        await db.from('accounts').delete().eq('id', id).eq('user_id', window.currentUser.id);
-        window.accountsMap.delete(id);
-        renderAccountCards();
-        renderSettingsTab();
-    }
+    await window.db.from('accounts').delete().eq('id', id).eq('user_id', window.currentUser.id);
+    window.accountsMap.delete(id);
+    renderAccountCards();
+    renderSettingsTab();
 };
 
 window.deleteCategorySettings = async (id) => {
     const cat = window.categoriesMap?.get(id);
     if (!cat || !confirm(`Supprimer "${cat.name}" ?`)) return;
-    const db = window.db;
-    if (db && window.currentUser) {
-        await db.from('categories').delete().eq('id', id).eq('user_id', window.currentUser.id);
-        window.categoriesMap.delete(id);
-        renderCategoriesSettings();
-    }
+    await window.db.from('categories').delete().eq('id', id).eq('user_id', window.currentUser.id);
+    window.categoriesMap.delete(id);
+    renderCategoriesSettings();
 };
 
 // ==================== HELPERS ====================
-
 function fmt(n) {
     return Math.round(n).toLocaleString('fr');
 }
 
+// FIX : setEl reçoit une valeur numérique et formate avec fmt() à l'intérieur
+// Cohérent avec l'appel dans renderHomeSummary (setEl('homeExpense', expense))
 function setEl(id, val) {
     const el = document.getElementById(id);
-    if (el) el.textContent = val + ' F';
+    if (el) el.textContent = fmt(val) + ' F';
 }
 
 function openModal(id) {
@@ -458,13 +455,14 @@ function openModal(id) {
     if (m) m.classList.add('open');
 }
 
-window.closeModal = function closeModal(id) {
+window.closeModal = function(id) {
     const m = document.getElementById(id);
     if (m) m.classList.remove('open');
 };
 
 function setTransType(value) {
-    document.getElementById('transType').value = value;
+    const hiddenInput = document.getElementById('transType');
+    if (hiddenInput) hiddenInput.value = value;
     document.querySelectorAll('.type-toggle-btn').forEach(b => {
         b.classList.toggle('active', b.dataset.value === value);
     });
@@ -481,7 +479,7 @@ function exportCSV() {
     const txs = window.transactionsData || [];
     if (!txs.length) { alert('Aucune transaction à exporter.'); return; }
     const header = ['Date', 'Type', 'Montant (F)', 'Catégorie', 'Compte', 'Description'];
-    const rows = txs.map(t => [
+    const rows   = txs.map(t => [
         t.date,
         t.type === 'expense' ? 'Dépense' : 'Revenu',
         t.amount,
@@ -489,57 +487,60 @@ function exportCSV() {
         t.accounts?.name || '?',
         (t.description || '').replace(/,/g, ';')
     ]);
-    const csv = [header, ...rows].map(r => r.join(',')).join('\n');
+    const csv  = [header, ...rows].map(r => r.join(',')).join('\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
+    const url  = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
-    link.download = `xaalis_export_${new Date().toISOString().slice(0,10)}.csv`;
+    link.href     = url;
+    link.download = `xaalis_export_${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
 }
 
-// ==================== PATCH APP.JS (overrides) ====================
+// ==================== PATCH APP.JS ====================
 
-// Sauvegarde de la fonction originale de app.js AVANT de la surcharger
-const originalUpdateBalances = window.updateBalancesDisplay;
-
+// FIX : updateBalancesDisplay — nav.js étend la version d'app.js
+// au lieu de la remplacer complètement
+const _origUpdateBalances = window.updateBalancesDisplay;
 window.updateBalancesDisplay = function() {
-    if (originalUpdateBalances) originalUpdateBalances();
+    if (_origUpdateBalances) _origUpdateBalances();
     renderAccountCards();
     const badge = document.getElementById('userEmailShort');
-    if (badge && window.currentUser) {
-        badge.textContent = window.currentUser.email.split('@')[0];
-    }
+    if (badge && window.currentUser) badge.textContent = window.currentUser.email.split('@')[0];
 };
 
-// Override de refreshDashboard — NE PAS rappeler l'original si déjà en cours
-let isNavRefreshing = false;
+// FIX : refreshDashboard — app.js expose sa propre version via window.refreshDashboard.
+// nav.js la surcharge pour ajouter les renders UI, mais appelle l'original d'app.js
+// en capturant la référence APRÈS le chargement d'app.js (ordre : app.js → nav.js).
+// window._origRefresh était undefined car jamais assigné dans l'ancien app.js.
+const _origRefreshDashboard = window.refreshDashboard;
+let _navRefreshing = false;
 
 window.refreshDashboard = async function() {
-    if (isNavRefreshing) return;
-    isNavRefreshing = true;
+    if (_navRefreshing) return;
+    _navRefreshing = true;
     try {
-        if (window._origRefresh) await window._origRefresh();
+        if (_origRefreshDashboard) await _origRefreshDashboard();
         renderAccountCards();
         renderHomeSummary();
         renderRecentTransactions();
         updateTransactionsTable();
     } finally {
-        isNavRefreshing = false;
+        _navRefreshing = false;
     }
 };
 
-window.updateStats = function() { renderHomeSummary(); };
-window.updateChart = function() {};
 window.updateTransactionsTable = updateTransactionsTable;
 
+// ==================== MODAL TRANSACTION (surcharge nav.js) ====================
 window.openTransactionModal = function(mode = 'add', id = null) {
     const title = document.getElementById('transactionModalTitle');
     if (title) title.textContent = mode === 'edit' ? 'Modifier transaction' : 'Ajouter transaction';
-    const form = document.getElementById('transactionForm');
-    form.dataset.mode = mode;
+
+    const form   = document.getElementById('transactionForm');
+    form.dataset.mode          = mode;
     form.dataset.transactionId = id || '';
+
     const catSel = document.getElementById('transCategory');
     const accSel = document.getElementById('transAccount');
     catSel.innerHTML = '<option value="">— Choisir —</option>' +
@@ -548,19 +549,20 @@ window.openTransactionModal = function(mode = 'add', id = null) {
     accSel.innerHTML = '<option value="">— Choisir —</option>' +
         Array.from((window.accountsMap || new Map()).values())
             .map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+
     if (mode === 'edit' && id) {
         const t = (window.transactionsData || []).find(x => x.id === id);
         if (t) {
-            document.getElementById('transAmount').value = t.amount;
+            document.getElementById('transAmount').value      = t.amount;
             document.getElementById('transDescription').value = t.description || '';
             setTransType(t.type);
-            document.getElementById('transDate').value = t.date;
+            document.getElementById('transDate').value        = t.date;
             catSel.value = t.category_id || '';
-            accSel.value = t.account_id || '';
+            accSel.value = t.account_id  || '';
         }
     } else {
-        document.getElementById('transactionForm').reset();
-        document.getElementById('transDate').value = new Date().toISOString().slice(0,10);
+        form.reset();
+        document.getElementById('transDate').value = new Date().toISOString().slice(0, 10);
         setTransType('expense');
     }
     openModal('transactionModal');
@@ -571,15 +573,20 @@ document.getElementById('openAddAccountBtn')?.addEventListener('click', () => op
 document.getElementById('openAddCategoryBtn')?.addEventListener('click', () => openModal('addCategoryModal'));
 
 document.getElementById('addAccountBtn')?.addEventListener('click', async () => {
-    const name = document.getElementById('newAccountName').value.trim().toLowerCase().replace(/\s+/g,'_');
+    const name    = document.getElementById('newAccountName').value.trim().toLowerCase().replace(/\s+/g, '_');
     const balance = parseFloat(document.getElementById('newAccountBalance').value) || 0;
-    if (!name) return;
-    await window.executeInstruction({ action: 'add_account', new_name: name, balance });
-    document.getElementById('newAccountName').value = '';
-    document.getElementById('newAccountBalance').value = '0';
-    closeModal('addAccountModal');
-    renderAccountCards();
-    renderSettingsTab();
+    if (!name || !window.currentUser || !window.db) return;
+    const { data } = await window.db.from('accounts')
+        .insert({ user_id: window.currentUser.id, name, balance })
+        .select();
+    if (data?.[0]) {
+        window.accountsMap.set(data[0].id, data[0]);
+        document.getElementById('newAccountName').value    = '';
+        document.getElementById('newAccountBalance').value = '0';
+        closeModal('addAccountModal');
+        renderAccountCards();
+        renderSettingsTab();
+    }
 });
 
 document.getElementById('addCategoryBtn')?.addEventListener('click', async () => {
