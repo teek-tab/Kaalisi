@@ -1,4 +1,4 @@
-// ==================== CONFIGURATION ====================
+// ==================== CONFIGURATION =====================
 const SUPABASE_URL = 'https://vsvvtyjbdrldlcswujzg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZzdnZ0eWpiZHJsZGxjc3d1anpnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxNDUyNTEsImV4cCI6MjA5MjcyMTI1MX0.YgkmLIoPJi3FQI6LvBVudB76LkMjR2Jywr8SZjNj1no';
 
@@ -24,9 +24,9 @@ let conversationMessages = [];
 // ========== CACHE & VERROUS ==========
 let refreshPromise = null;
 let lastUserDataLoad = 0;
-const USER_DATA_CACHE_MS = 30000; // 30 secondes de cache
+const USER_DATA_CACHE_MS = 30000;
 let lastTransactionsLoad = { key: '', time: 0 };
-const TRANSACTIONS_CACHE_MS = 10000; // 10 secondes de cache
+const TRANSACTIONS_CACHE_MS = 10000;
 
 // DOM
 const authScreen = document.getElementById('authScreen');
@@ -61,8 +61,7 @@ async function checkAuth() {
         dashboard.style.display = 'block';
         const userEmailSpan = document.getElementById('userEmail');
         if (userEmailSpan) userEmailSpan.textContent = currentUser.email;
-        // Charger les données utilisateur UNE SEULE FOIS
-        await loadUserData(true); // force=true au premier chargement
+        await loadUserData(true);
         await loadPeriod('month');
         resetConversation();
         addChatMessage('system', '🟢 Connecté ! Parlez naturellement.');
@@ -344,7 +343,6 @@ async function handleUpdateAccount(inst) {
 // ==================== DONNÉES AVEC CACHE ====================
 async function loadUserData(force = false) {
     const now = Date.now();
-    // Ne pas recharger si les données sont fraîches (sauf force=true)
     if (!force && now - lastUserDataLoad < USER_DATA_CACHE_MS && accountsMap.size > 0 && categoriesMap.size > 0) {
         console.log('[CACHE] loadUserData skipped — données fraîches');
         return;
@@ -359,6 +357,7 @@ async function loadUserData(force = false) {
     window.categoriesMap = categoriesMap;
 }
 function updateBalancesDisplay() {
+    // Élément optionnel, peut ne pas exister
     const balancesDiv = document.getElementById('balances');
     if (balancesDiv) {
         balancesDiv.innerHTML = Array.from(accountsMap.values()).map(a => `<span>${getEmoji(a.name)} ${a.name}: ${a.balance} F</span>`).join('');
@@ -389,7 +388,6 @@ async function loadPeriod(period) {
     window.currentPeriode = currentPeriode;
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
     document.querySelector(`.filter-btn[data-period="${period}"]`)?.classList.add('active');
-    // Invalider le cache transactions quand la période change
     lastTransactionsLoad = { key: '', time: 0 };
     await refreshDashboard();
 }
@@ -406,7 +404,6 @@ async function setPeriodeCustom() {
 
 // ==================== REFRESH AVEC VERROU GLOBAL ====================
 async function refreshDashboard() {
-    // Si un refresh est déjà en cours, attendre qu'il finisse
     if (refreshPromise) {
         console.log('[REFRESH] Déjà en cours, attente...');
         return refreshPromise;
@@ -415,7 +412,7 @@ async function refreshDashboard() {
     refreshPromise = (async () => {
         try {
             await loadTransactions();
-            await loadUserData(); // Utilise le cache si frais
+            await loadUserData();
             updateStats();
             updateChart();
             updateTransactionsTable();
@@ -436,7 +433,6 @@ async function loadTransactions() {
     const cacheKey = `${currentUser.id}_${currentPeriode.debut}_${currentPeriode.fin}`;
     const now = Date.now();
 
-    // Utiliser le cache si même période et données fraîches
     if (now - lastTransactionsLoad.time < TRANSACTIONS_CACHE_MS && lastTransactionsLoad.key === cacheKey) {
         console.log('[CACHE] loadTransactions skipped — même période, données fraîches');
         return;
@@ -456,6 +452,7 @@ function updateStats() {
     let total = 0, income = 0;
     transactionsData.forEach(t => { if (t.type === 'expense') total += t.amount; if (t.type === 'income') income += t.amount; });
     const nbJ = Math.max(1, Math.ceil((new Date(currentPeriode.fin) - new Date(currentPeriode.debut)) / (1000 * 3600 * 24)));
+    // Élément optionnel
     const statsContainer = document.getElementById('statsContainer');
     if (statsContainer) {
         statsContainer.innerHTML = `
@@ -490,6 +487,53 @@ async function generateInsights() {
     }
 }
 
+// ==================== SAVE TRANSACTION FORM ====================
+async function saveTransactionForm() {
+    const form = document.getElementById('transactionForm');
+    const mode = form.dataset.mode;
+    const transId = form.dataset.transactionId;
+    const amount = parseFloat(document.getElementById('transAmount')?.value || 0);
+    const description = document.getElementById('transDescription')?.value || '';
+    const type = document.getElementById('transType')?.value || 'expense';
+    const date = document.getElementById('transDate')?.value;
+    const accountId = document.getElementById('transAccount')?.value;
+    const categoryId = document.getElementById('transCategory')?.value;
+
+    if (!amount || !accountId || !date) {
+        alert('Veuillez remplir tous les champs obligatoires');
+        return;
+    }
+
+    const account = window.accountsMap?.get(accountId);
+    const category = window.categoriesMap?.get(categoryId);
+
+    if (mode === 'edit' && transId) {
+        await executeInstruction({
+            action: 'update_transaction',
+            transaction_id: transId,
+            fields_to_update: {
+                amount,
+                description,
+                date,
+                account: account?.name,
+                category: category?.name
+            }
+        });
+    } else {
+        await executeInstruction({
+            action: type === 'income' ? 'add_income' : 'add_expense',
+            amount,
+            description,
+            category: category?.name || 'Autres',
+            account: account?.name,
+            date
+        });
+    }
+
+    closeModal('transactionModal');
+    await refreshDashboard();
+}
+
 // ==================== EVENT LISTENERS ====================
 document.getElementById('loginBtn').onclick = login;
 document.getElementById('registerBtn').onclick = register;
@@ -517,52 +561,20 @@ userInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(
 window._origUpdateBalances = updateBalancesDisplay;
 window._origRefresh = refreshDashboard;
 window.executeInstruction = executeInstruction;
+window.saveTransactionForm = saveTransactionForm;
+
+// Fonctions exposées globalement
+window.deleteTransaction = async function(id) {
+    if (!confirm('Supprimer cette transaction ?')) return;
+    await executeInstruction({ action: 'delete_transaction', transaction_id: id });
+    await refreshDashboard();
+};
+window.editTransaction = function(id) {
+    window.openTransactionModal('edit', id);
+};
+window.closeModal = function(id) {
+    const m = document.getElementById(id);
+    if (m) m.style.display = 'none';
+};
 
 checkAuth();
-
-
-// ==================== FONCTIONS MANQUANTES ====================
-
-async function deleteTransaction(id) {
-    if (!confirm('Supprimer cette transaction ?')) return;
-    
-    const t = transactionsData.find(x => x.id === id);
-    if (!t) return;
-    
-    try {
-        // 1. Remettre le solde du compte à jour
-        const acc = accountsMap.get(t.account_id);
-        if (acc) {
-            const newBal = t.type === 'income' 
-                ? acc.balance - t.amount 
-                : acc.balance + t.amount;
-            await db.from('accounts').update({ balance: newBal }).eq('id', t.account_id);
-            acc.balance = newBal;
-            updateBalancesDisplay();
-        }
-        
-        // 2. Supprimer la transaction
-        await db.from('transactions').delete().eq('id', id).eq('user_id', currentUser.id);
-        
-        // 3. Mettre à jour les données locales
-        transactionsData = transactionsData.filter(x => x.id !== id);
-        window.transactionsData = transactionsData;
-        
-        // 4. Rafraîchir l'UI (sans requêtes réseau si possible)
-        updateTransactionsTable();
-        renderRecentTransactions();
-        renderHomeSummary();
-        
-    } catch (err) {
-        console.error('Erreur suppression:', err);
-        addChatMessage('ai', '❌ Erreur lors de la suppression.');
-    }
-}
-
-async function editTransaction(id) {
-    window.openTransactionModal('edit', id);
-}
-
-// Exposer globalement pour les onclick inline
-window.deleteTransaction = deleteTransaction;
-window.editTransaction = editTransaction;
