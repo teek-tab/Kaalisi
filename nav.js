@@ -1,19 +1,22 @@
-// ==================== THÈME CLAIR/SOMBRE ====================
-const themeToggle = document.getElementById('themeToggle');
+// ==================== NAV.JS - UNIQUEMENT DES FONCTIONS, PAS DE VARIABLES GLOBALES ====================
 
-if (themeToggle) {
-    const savedTheme = localStorage.getItem('theme') || 'dark';
-    document.documentElement.setAttribute('data-theme', savedTheme);
-    themeToggle.textContent = savedTheme === 'dark' ? '🌙' : '☀️';
+// Initialisation du thème (sans créer de nouvelle variable globale)
+(function initTheme() {
+    const toggle = document.getElementById('themeToggle');
+    if (toggle) {
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        toggle.textContent = savedTheme === 'dark' ? '🌙' : '☀️';
 
-    themeToggle.addEventListener('click', () => {
-        const current = document.documentElement.getAttribute('data-theme');
-        const next = current === 'dark' ? 'light' : 'dark';
-        document.documentElement.setAttribute('data-theme', next);
-        localStorage.setItem('theme', next);
-        themeToggle.textContent = next === 'dark' ? '🌙' : '☀️';
-    });
-}
+        toggle.addEventListener('click', () => {
+            const current = document.documentElement.getAttribute('data-theme');
+            const next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('theme', next);
+            toggle.textContent = next === 'dark' ? '🌙' : '☀️';
+        });
+    }
+})();
 
 // ==================== NAVIGATION ONGLETS ====================
 
@@ -169,11 +172,10 @@ window.changePage = (delta) => {
 };
 
 // ==================== ONGLET STATS ====================
-// NOTE: balanceChartInstance et expensesChartInstance sont DÉCLARÉS dans app.js
-// Ne pas les redéclarer ici !
-
-let comparisonCache = { key: '', data: null, time: 0 };
-const COMPARISON_CACHE_MS = 60000;
+// Les variables window.balanceChartInstance et window.expensesChartInstance sont définies dans app.js
+// Nous utilisons ici un cache local à ce module (pas de conflit)
+const _comparisonCache = { key: '', data: null, time: 0 };
+const _COMPARISON_CACHE_MS = 60000;
 
 function renderStatsTab() {
     renderStatsKPIs();
@@ -286,8 +288,8 @@ async function renderComparison() {
     const cacheKey = `${prevDebut}_${prevFin}`;
     const now = Date.now();
 
-    if (comparisonCache.key === cacheKey && now - comparisonCache.time < COMPARISON_CACHE_MS) {
-        el.innerHTML = comparisonCache.data;
+    if (_comparisonCache.key === cacheKey && now - _comparisonCache.time < _COMPARISON_CACHE_MS) {
+        el.innerHTML = _comparisonCache.data;
         return;
     }
 
@@ -317,7 +319,9 @@ async function renderComparison() {
                 ${deltaTag(incDelta, false)}
             </div>`;
         el.innerHTML = html;
-        comparisonCache = { key: cacheKey, data: html, time: now };
+        _comparisonCache.key = cacheKey;
+        _comparisonCache.data = html;
+        _comparisonCache.time = now;
     } catch(e) {
         el.innerHTML = '<div class="empty-state">Impossible de charger la comparaison</div>';
     }
