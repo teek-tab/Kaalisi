@@ -369,15 +369,24 @@ async function setPeriodeCustom() {
     const fin = document.getElementById('dateFin').value;
     if (debut && fin) { currentPeriode = { debut, fin }; window.currentPeriode = currentPeriode; await refreshDashboard(); }
 }
+
+let isRefreshing = false;
+
 async function refreshDashboard() {
-    await loadTransactions();
-    await loadUserData();
-    updateStats();
-    updateChart();
-    updateTransactionsTable();
-    await generateInsights();
-    if (window._origRefresh) await window._origRefresh();
+    if (isRefreshing) return;
+    isRefreshing = true;
+    try {
+        await loadTransactions();
+        await loadUserData();
+        updateStats();
+        updateChart();
+        updateTransactionsTable();
+        await generateInsights();
+    } finally {
+        isRefreshing = false;
+    }
 }
+
 async function loadTransactions() {
     const { data } = await db.from('transactions')
         .select('*, categories(name,icon), accounts(name)')
