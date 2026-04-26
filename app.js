@@ -519,3 +519,50 @@ window._origRefresh = refreshDashboard;
 window.executeInstruction = executeInstruction;
 
 checkAuth();
+
+
+// ==================== FONCTIONS MANQUANTES ====================
+
+async function deleteTransaction(id) {
+    if (!confirm('Supprimer cette transaction ?')) return;
+    
+    const t = transactionsData.find(x => x.id === id);
+    if (!t) return;
+    
+    try {
+        // 1. Remettre le solde du compte à jour
+        const acc = accountsMap.get(t.account_id);
+        if (acc) {
+            const newBal = t.type === 'income' 
+                ? acc.balance - t.amount 
+                : acc.balance + t.amount;
+            await db.from('accounts').update({ balance: newBal }).eq('id', t.account_id);
+            acc.balance = newBal;
+            updateBalancesDisplay();
+        }
+        
+        // 2. Supprimer la transaction
+        await db.from('transactions').delete().eq('id', id).eq('user_id', currentUser.id);
+        
+        // 3. Mettre à jour les données locales
+        transactionsData = transactionsData.filter(x => x.id !== id);
+        window.transactionsData = transactionsData;
+        
+        // 4. Rafraîchir l'UI (sans requêtes réseau si possible)
+        updateTransactionsTable();
+        renderRecentTransactions();
+        renderHomeSummary();
+        
+    } catch (err) {
+        console.error('Erreur suppression:', err);
+        addChatMessage('ai', '❌ Erreur lors de la suppression.');
+    }
+}
+
+async function editTransaction(id) {
+    window.openTransactionModal('edit', id);
+}
+
+// Exposer globalement pour les onclick inline
+window.deleteTransaction = deleteTransaction;
+window.editTransaction = editTransaction;
