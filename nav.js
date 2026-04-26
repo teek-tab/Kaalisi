@@ -498,22 +498,21 @@ window.updateBalancesDisplay = function() {
     }
 };
 
-let isRefreshing = false;
+let isNavRefreshing = false;
 
-async function refreshDashboard() {
-    if (isRefreshing) return;
-    isRefreshing = true;
+window.refreshDashboard = async function() {
+    if (isNavRefreshing) return;
+    isNavRefreshing = true;
     try {
-        await loadTransactions();
-        await loadUserData();
-        updateStats();
-        updateChart();
+        if (window._origRefresh) await window._origRefresh();
+        renderAccountCards();
+        renderHomeSummary();
+        renderRecentTransactions();
         updateTransactionsTable();
-        await generateInsights();
     } finally {
-        isRefreshing = false;
+        isNavRefreshing = false;
     }
-}
+};
 
 window.updateStats = function() { renderHomeSummary(); };
 window.updateChart = function() {};
