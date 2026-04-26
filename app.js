@@ -331,12 +331,11 @@ async function loadUserData() {
     window.categoriesMap = categoriesMap;
 }
 function updateBalancesDisplay() {
-    // Sera overridden par nav.js
     const balancesDiv = document.getElementById('balances');
     if (balancesDiv) {
         balancesDiv.innerHTML = Array.from(accountsMap.values()).map(a => `<span>${getEmoji(a.name)} ${a.name}: ${a.balance} F</span>`).join('');
     }
-    if (window._origUpdateBalances) window._origUpdateBalances();
+    // Ne pas appeler window._origUpdateBalances ici
 }
 function getEmoji(name) { return { cash: '💵', wave: '📱', epargne: '💰' }[name] || '🏦'; }
 
